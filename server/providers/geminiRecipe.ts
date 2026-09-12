@@ -66,7 +66,6 @@ export class GeminiRecipeProvider implements RecipeProvider {
         config: {
           responseMimeType: "application/json",
           responseJsonSchema: jsonSchema,
-          thinkingConfig: { thinkingLevel: "medium" },
         } as unknown as Record<string, unknown>,
       });
 

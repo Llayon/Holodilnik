@@ -14,6 +14,7 @@ function getVisionProvider() {
 }
 
 router.post("/analyze", async (req, res) => {
+  let effectiveMime = "image/jpeg";
   try {
     const parsed = analyzeRequestSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -44,8 +45,23 @@ router.post("/analyze", async (req, res) => {
     }
 
     // Basic mime validation
-    const allowedMimes = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
-    const effectiveMime = mimeType || "image/jpeg";
+    const allowedMimes = ["image/jpeg", "image/png", "image/webp"];
+    effectiveMime = mimeType || "image/jpeg";
+    // Detect HEIC via mime or base64 content (ftyp)
+    const isHeicMime = effectiveMime === "image/heic" || effectiveMime === "image/heif";
+    let isHeicContent = false;
+    try {
+      const header = Buffer.from(base64Part.slice(0, 32), "base64").toString("ascii");
+      if (header.includes("ftyp")) isHeicContent = true;
+    } catch {
+      // ignore
+    }
+    if (isHeicMime || isHeicContent) {
+      return res.status(400).json({
+        error: "HEIC не поддерживается — откройте фото в галерее iPhone → Поделиться → Сохранить как JPEG, затем загрузите",
+        code: "UNSUPPORTED_MIME",
+      });
+    }
     if (!allowedMimes.includes(effectiveMime) && !effectiveMime.startsWith("image/")) {
       return res.status(400).json({
         error: "Unsupported image type",
@@ -97,8 +113,12 @@ router.post("/analyze", async (req, res) => {
     }
     if (message.includes("INVALID_ARGUMENT")) {
       console.error("[fridge/analyze] INVALID_ARGUMENT details:", message);
+      // Check if likely HEIC or corrupted image
+      const isMaybeHeic = effectiveMime === "image/jpeg" && message.includes("400");
       return res.status(502).json({
-        error: "Ошибка анализа изображения — неверный формат запроса к модели",
+        error: isMaybeHeic
+          ? "Модель не смогла обработать фото — попробуйте JPEG/PNG (HEIC с iPhone не поддерживается, конвертируйте в галерее)"
+          : "Ошибка анализа изображения — неверный формат запроса к модели",
         code: "PROVIDER_ERROR",
         details: process.env.NODE_ENV !== "production" ? message : undefined,
       });

@@ -82,12 +82,16 @@ export function humanizeApiError(e: unknown): string {
         return "Фото слишком большое (максимум 8 МБ). Попробуйте другое.";
       case "INVALID_IMAGE":
         return "Не похоже на фото. Попробуйте другое изображение.";
+      case "UNSUPPORTED_MIME":
+        return e.message || "HEIC не поддерживается — откройте фото в галерее и сохраните как JPEG, затем загрузите снова.";
       case "NO_FOOD_DETECTED":
         return "Не нашёл еду на фото. Попробуйте снять ближе или с лучшим светом.";
       case "RATE_LIMITED":
-        return "Превышен лимит запросов — подождите минуту и попробуйте снова.";
+        return e.message || "Превышен лимит запросов — подождите 20-30 секунд и попробуйте снова.";
       case "INVALID_PROVIDER_RESPONSE":
         return "Не удалось распознать содержимое — попробуйте ещё раз.";
+      case "PROVIDER_ERROR":
+        return e.message || "Ошибка анализа изображения — попробуйте другое фото (JPEG/PNG, хорошее освещение)";
       default:
         return e.message || "Что-то пошло не так. Попробуйте ещё раз.";
     }

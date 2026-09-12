@@ -75,14 +75,43 @@ export const recommendationsRequestSchema = z.object({
 // Helpers to generate JSON Schema for Gemini
 // Zod 4 provides z.toJSONSchema()
 
+const UNSUPPORTED_SCHEMA_KEYS = new Set([
+  "$schema",
+  "minLength",
+  "maxLength",
+  "pattern",
+  "const",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "multipleOf",
+  "uniqueItems",
+]);
+
+function sanitizeJsonSchema(obj: unknown): unknown {
+  if (Array.isArray(obj)) {
+    return obj.map(sanitizeJsonSchema);
+  }
+  if (obj && typeof obj === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      if (UNSUPPORTED_SCHEMA_KEYS.has(k)) continue;
+      // $defs is supported, but ensure we keep it; $schema is not
+      out[k] = sanitizeJsonSchema(v);
+    }
+    return out;
+  }
+  return obj;
+}
+
 export function getFridgeJsonSchema(): unknown {
   // Use z.toJSONSchema if available
   // Fallback to manual schema if not
   try {
     if (typeof (z as unknown as { toJSONSchema?: unknown }).toJSONSchema === "function") {
-      return (z as unknown as { toJSONSchema: (s: unknown) => unknown }).toJSONSchema(
+      const raw = (z as unknown as { toJSONSchema: (s: unknown) => unknown }).toJSONSchema(
         fridgeAnalysisSchema,
       );
+      return sanitizeJsonSchema(raw);
     }
   } catch {
     // ignore
@@ -128,11 +157,12 @@ export function getFridgeJsonSchema(): unknown {
 export function getRecommendationsJsonSchema(): unknown {
   try {
     if (typeof (z as unknown as { toJSONSchema?: unknown }).toJSONSchema === "function") {
-      return (z as unknown as { toJSONSchema: (s: unknown) => unknown }).toJSONSchema(
+      const raw = (z as unknown as { toJSONSchema: (s: unknown) => unknown }).toJSONSchema(
         z.object({
           recipes: z.array(recipeSchema).length(3),
         }),
       );
+      return sanitizeJsonSchema(raw);
     }
   } catch {
     // ignore

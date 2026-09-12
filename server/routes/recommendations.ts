@@ -49,14 +49,19 @@ router.post("/", async (req, res) => {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[recommendations] error:", message);
 
+    const lower = message.toLowerCase();
     if (
-      message.includes("quota") ||
+      lower.includes("quota") ||
       message.includes("429") ||
-      message.includes("RESOURCE_EXHAUSTED")
+      message.includes("RESOURCE_EXHAUSTED") ||
+      message.includes("503") ||
+      lower.includes("unavailable") ||
+      lower.includes("high demand")
     ) {
       return res.status(429).json({
-        error: "Превышен лимит запросов, попробуйте позже",
+        error: "Превышен лимит запросов — подождите 20-30 секунд",
         code: "RATE_LIMITED",
+        details: process.env.NODE_ENV !== "production" ? message : undefined,
       });
     }
 

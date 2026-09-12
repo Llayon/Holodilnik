@@ -74,20 +74,33 @@ router.post("/analyze", async (req, res) => {
     console.error("[fridge/analyze] error:", message);
 
     // Map known errors
+    const lower = message.toLowerCase();
     if (
-      message.includes("quota") ||
+      lower.includes("quota") ||
       message.includes("429") ||
-      message.includes("RESOURCE_EXHAUSTED")
+      message.includes("RESOURCE_EXHAUSTED") ||
+      message.includes("503") ||
+      lower.includes("unavailable") ||
+      lower.includes("high demand")
     ) {
       return res.status(429).json({
-        error: "Превышен лимит запросов, попробуйте позже",
+        error: "Превышен лимит запросов — подождите 20-30 секунд и попробуйте снова",
         code: "RATE_LIMITED",
+        details: process.env.NODE_ENV !== "production" ? message : undefined,
       });
     }
     if (message.includes("Invalid JSON") || message.includes("parse")) {
       return res.status(502).json({
         error: "Не удалось распознать изображение, попробуйте ещё раз",
         code: "INVALID_PROVIDER_RESPONSE",
+      });
+    }
+    if (message.includes("INVALID_ARGUMENT")) {
+      console.error("[fridge/analyze] INVALID_ARGUMENT details:", message);
+      return res.status(502).json({
+        error: "Ошибка анализа изображения — неверный формат запроса к модели",
+        code: "PROVIDER_ERROR",
+        details: process.env.NODE_ENV !== "production" ? message : undefined,
       });
     }
 

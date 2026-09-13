@@ -93,6 +93,44 @@ describe("cache key stability", () => {
     expect(kGem).not.toBe(kGroq);
   });
 
+  it("vision key differs for zai vs groq vs gemini (provider prompt version isolation)", () => {
+    const kGem = _internal.stableVisionKey({
+      imageBase64: "aaaa",
+      provider: "gemini",
+      modelId: "gemini-3.8-flash",
+    });
+    const kZai = _internal.stableVisionKey({
+      imageBase64: "aaaa",
+      provider: "zai",
+      modelId: "glm-4.6v-flash",
+    });
+    const kGroq = _internal.stableVisionKey({
+      imageBase64: "aaaa",
+      provider: "groq",
+      modelId: "qwen/qwen3.8-27b",
+    });
+    expect(kGem).not.toBe(kZai);
+    expect(kGroq).not.toBe(kZai);
+    // zai uses distinct prompt version, so key must contain it
+    expect(kZai).toContain("zai-vision-v1");
+    expect(kGem).toContain("v1");
+    expect(kGroq).toContain("v1");
+  });
+
+  it("zai cache isolated from gemini/groq", () => {
+    const img = "bbbb";
+    setVisionCache({ imageBase64: img, provider: "zai", modelId: "glm-4.6v-flash" }, sampleVision);
+    expect(
+      getVisionCache({ imageBase64: img, provider: "gemini", modelId: "gemini-3.8-flash" }),
+    ).toBeUndefined();
+    expect(
+      getVisionCache({ imageBase64: img, provider: "groq", modelId: "qwen/qwen3.8-27b" }),
+    ).toBeUndefined();
+    expect(
+      getVisionCache({ imageBase64: img, provider: "zai", modelId: "glm-4.6v-flash" }),
+    ).toBeDefined();
+  });
+
   it("vision key handles data URL prefix normalization", () => {
     const raw = "aaaa";
     const withPrefix = "data:image/jpeg;base64,aaaa";

@@ -21,7 +21,9 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:live:groq": "tsx server/liveVerifyGroq.ts"
+    "test:live:groq": "tsx server/liveVerifyGroq.ts",
+    "test:live:zai": "tsx server/liveVerifyVision.ts --provider=zai",
+    "test:live:vision": "tsx server/liveVerifyVision.ts"
   },
   "dependencies": {
     "@google/genai": "^1.13.0",

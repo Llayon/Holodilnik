@@ -18,7 +18,7 @@ export interface UncertainItem {
   reason?: string;
 }
 
-export type ProviderName = "mock" | "gemini" | "groq";
+export type ProviderName = "mock" | "gemini" | "groq" | "zai";
 
 export interface FridgeAnalysisResult {
   ingredients: DetectedIngredient[];

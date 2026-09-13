@@ -125,3 +125,21 @@
 - **Decision:** Add `npm run test:live:groq` → `tsx server/liveVerifyGroq.ts`, isolated from `npm test` / CI / Playwright. Script checks keys, optionally loads `tmp/fridge.jpg`, runs Gemini vs Groq A/B on same image, saves sanitized comparison to `tmp/live-verify-comparison.json`, tests Groq recipes exactly 3.
 - **Context:** Spec requires small live verification after GROQ_API_KEY installed, not benchmark, no global accuracy claim from one image, no quota burn in automated loops.
 - **Consequence:** Normal tests remain deterministic mocked; live command must be run manually with key and photo.
+
+## ADR-022: Z.AI GLM-4.6V-Flash as third vision benchmark provider
+
+- **Decision:** Add Z.AI `glm-4.6v-flash` as third vision provider (`ZaiVisionProvider`) via direct HTTPS `https://api.z.ai/api/paas/v4/chat/completions` with `Authorization: Bearer ZAI_API_KEY`, `model: glm-4.6v-flash`, data URL image, prompt `zai-vision-v1` (same semantic rules as Gemini/Groq), `response_format: {type:"json_object"}` with fallback without, local Zod validation, dedup, normalization. Verified via https://docs.z.ai/guides/vlm/glm-4.6v (Lightweight, Completely Free, 128K context, Image/Video/Text/File) and https://docs.z.ai/api-reference/llm/chat-completion (enum includes `glm-4.6v-flash`, endpoint `/paas/v4/chat/completions`, vision content `image_url`). Free pricing but with rate/daily limits (codes 1302/1303/1304/1305/1308/1113, 429). Do not silently substitute other GLM.
+- **Context:** Benchmark Z.AI vision vs Gemini/Groq on same real fridge image; production routing stays Gemini→Groq, recipes Groq→Gemini until evidence. Z.AI is OpenAI-compatible, simplest is direct fetch without large SDK.
+- **Consequence:** `server/config.ts` adds `ZAI_MODEL_ID`, `ZAI_API_BASE`, `ZAI_VISION_PROMPT_VERSION`, `isZaiAvailable()` with ASCII/placeholder check; `.env.example` adds `ZAI_API_KEY=`; `shared/types.ts` ProviderName includes `zai`; `server/cache.ts` uses `zai-vision-v1` for ZAI prompt version (provider/model/promptVersion isolation); health shows `zaiAvailable` and `benchmarkProviders`; dev explicit provider selection via `?provider=zai` in `POST /api/fridge/analyze` when not production.
+
+## ADR-023: Tri-provider live benchmark harness
+
+- **Decision:** Add `server/liveVerifyVision.ts` (cache-aware, reuses `getVisionCache` for Gemini/Groq, only ZAI needs new request if image already cached) and npm scripts `test:live:vision` (all three) and `test:live:zai` (only ZAI). Artifact `tmp/live-vision-comparison.json` with `{image, models, providers:{gemini,groq,zai}, groundTruthNote, tableData}` and human table. Legacy `test:live:groq` kept. No quota burn on second run of same image (cached:true).
+- **Context:** Spec requires same-image A/B/C benchmark, not re-calling Gemini/Groq if cached, only ZAI new, sanitized JSON without keys, manual evaluation of cucumbers/yellow tomatoes/cherry tomatoes/cutlets/cheese and package on right should be omitted.
+- **Consequence:** `npm run test:live:vision [-- ./photo.jpg]` / `npm run test:live:zai` isolated from CI; second run hits cache; manual table `Provider | Correct | False Positive | Misses | User Corrections` filled by human.
+
+## ADR-024: ZAI error mapping and health diagnostics
+
+- **Decision:** Map Z.AI business codes 1302 rate limit, 1303 high frequency, 1304 daily limit, 1305 overloaded, 1308 usage limit, 1113 insufficient balance (plus HTTP 429/503) to `RATE_LIMITED` semantics; 1214 invalid param triggers retry without `response_format`; ByteString (non-ASCII key) mapped to 401 invalid key with hint to check `ZAI_API_KEY` is ASCII. Health `GET /api/health` exposes `zai:{available, model, apiBase}` and `vision.available.zai` without secrets.
+- **Context:** Z.AI docs list codes via https://docs.z.ai/api-reference/api-code ; free model still has daily/usage limits; transient limits should be visible, not silent fallback loops.
+- **Consequence:** Benchmark harness reports ZAI limits explicitly rather than silently replacing with another provider; fridge route maps ZAI 429/overloaded to 429, invalid key to 401.

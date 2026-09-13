@@ -4,7 +4,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fridgeRouter from "./routes/fridge.js";
 import recommendationsRouter from "./routes/recommendations.js";
-import { config, logConfig, isMockMode, isGeminiAvailable, isGroqAvailable } from "./config.js";
+import {
+  config,
+  logConfig,
+  isMockMode,
+  isGeminiAvailable,
+  isGroqAvailable,
+  isZaiAvailable,
+} from "./config.js";
 import { getCacheStats, clearAllCaches } from "./cache.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -22,6 +29,7 @@ app.get("/api/health", (_req, res) => {
   const mockMode = isMockMode();
   const geminiAvail = isGeminiAvailable();
   const groqAvail = isGroqAvailable();
+  const zaiAvail = isZaiAvailable();
   res.json({
     status: "ok",
     // legacy fields for backward compat
@@ -35,6 +43,12 @@ app.get("/api/health", (_req, res) => {
       geminiAvailable: geminiAvail,
       groqAvailable: groqAvail,
       primaryAvailable: geminiAvail,
+      available: {
+        gemini: geminiAvail,
+        groq: groqAvail,
+        zai: zaiAvail,
+      },
+      benchmarkProviders: ["gemini", "groq", "zai"],
     },
     recipes: {
       primary: "groq",
@@ -43,10 +57,17 @@ app.get("/api/health", (_req, res) => {
       geminiAvailable: geminiAvail,
       primaryAvailable: groqAvail,
     },
+    zai: {
+      available: zaiAvail,
+      model: config.zaiModelId,
+      apiBase: config.zaiApiBase,
+    },
     models: {
       gemini: config.modelId,
       groq: config.groqModelId,
+      zai: config.zaiModelId,
     },
+    benchmarkProviders: ["gemini", "groq", "zai"],
     cache: getCacheStats(),
   });
 });

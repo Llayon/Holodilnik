@@ -87,8 +87,27 @@
 - **Cause:** `Start-Job` defaults to `C:\Users\user\Documents`, not repo root; server never started with new code. Also `npm run dev:server` via `tsx watch` needed correct cwd.
 - **Fix:** Use `Set-Location D:\Programms\Max\Holodilnik` inside job script; health now returns `vision:{primary,fallback,geminiAvailable,groqAvailable}` etc.
 
+## F-016: Groq/GROQ_API_KEY placeholder ByteString error
+
+- **Symptom:** `Groq vision failed: Cannot convert argument to a ByteString because the character at index 7 has a value of 1090` after adding GROQ provider; health showed `groqAvailable:true` but vision fallback failed.
+- **Cause:** `.env.local` contained placeholder `GROQ_API_KEY=твой_ключ` (Cyrillic) — `Buffer.from` ASCII header `Authorization: Bearer твой_ключ` fails ByteString conversion at index 7 (first char of key `т` = 1090). Gemini 429/503 correctly tried fallback to Groq, but Groq failed with ByteString, resulting in generic `Ошибка анализа изображения`.
+- **Fix:** Updated `server/config.ts` `isValidKey` to reject non-ASCII/placeholder/`YOUR`/too short, so `isGroqAvailable()` now `false` with placeholder and health shows `groqAvailable:false` with warning `looks invalid ... check .env.local is gsk_... ASCII`. Added explicit `ByteString` handling in `GroqVisionProvider`/`GroqRecipeProvider` to throw `401 Invalid GROQ_API_KEY` with hint. User must set real `gsk_...` ASCII key.
+
+## F-017: Playwright reuseExistingServer hid new mockMode
+
+- **Symptom:** After Groq changes, `npx playwright test` showed 4 failures: `expect(ingredients-step).toBeVisible` timeout, snapshot showed `LIVE · gemini-3.8-flash` instead of `MOCK` even though config has `MOCK_MODE=true`.
+- **Cause:** `playwright.config.ts` has `reuseExistingServer: !process.env.CI` — local existing `dev:server` with real keys (LIVE) was reused instead of starting new mock server. New `isValidKey` still considered real keys valid, so `mockMode` was false.
+- **Fix:** Kill existing node processes `taskkill /F /IM node.exe` before `npx playwright test` locally; now 12/12 pass. In CI `reuseExistingServer:false` so not affected.
+
+## F-018: Z.AI ByteString with placeholder key (same as Groq)
+
+- **Symptom:** Initial manual `Groq` ByteString test also appeared for `ZaiVisionProvider` when `ZAI_API_KEY=твой_ключ` — same `Authorization: Bearer` header fails.
+- **Cause:** Same placeholder handling as Groq.
+- **Fix:** Reused `isValidKey` for `isZaiAvailable()`, same warning, and added `ByteString` catch in `ZaiVisionProvider` to throw `401 Invalid ZAI_API_KEY` hint. Direct fetch with `Authorization: Bearer` now validates ASCII before request.
+
 ## Next Watch
 
 - If live Gemini returns `NO_FOOD_DETECTED` too often, tune vision prompt confidence threshold or add `mediaResolution` param.
 - If recipe generation fails slot validation (duplicate slots), add retry or repair step.
-- Groq vision may occasionally return English displayName; normalization re-maps to Russian but monitor for new unknown canonicals → add alias/display.
+- Groq/ZAI vision may occasionally return English displayName; normalization re-maps to Russian but monitor for new unknown canonicals → add alias/display.
+- Z.AI free tier limits (1302 rate limit, 1303 high frequency, 1304 daily limit, 1305 overloaded, 1308 usage limit) — benchmark harness reports them explicitly, not via silent fallback.

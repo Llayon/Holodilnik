@@ -1,7 +1,17 @@
 import { Router } from "express";
-import { config, isMockMode, isGeminiAvailable, isGroqAvailable } from "../config.js";
+import {
+  config,
+  isMockMode,
+  isGeminiAvailable,
+  isGroqAvailable,
+  isZaiAvailable,
+} from "../config.js";
 import { analyzeRequestSchema } from "../../shared/schemas.js";
 import { VisionProviderChain } from "../providers/router.js";
+import { ZaiVisionProvider } from "../providers/zaiVision.js";
+import { GeminiVisionProvider } from "../providers/geminiVision.js";
+import { GroqVisionProvider } from "../providers/groqVision.js";
+import { MockVisionProvider } from "../providers/mockVision.js";
 
 const router = Router();
 
@@ -59,6 +69,63 @@ router.post("/analyze", async (req, res) => {
       return res.status(400).json({
         error: "Unsupported image type",
         code: "UNSUPPORTED_MIME",
+      });
+    }
+
+    // Dev-only explicit provider selection (benchmark, not production routing)
+    const requestedProvider = (
+      (req.query.provider as string | undefined) ?? (req.body?.provider as string | undefined)
+    )?.toLowerCase();
+    const isDev = process.env.NODE_ENV !== "production";
+    if (
+      isDev &&
+      requestedProvider &&
+      ["gemini", "groq", "zai", "mock"].includes(requestedProvider)
+    ) {
+      // Direct provider for benchmark harness
+      let directProvider;
+      if (requestedProvider === "zai") {
+        if (!isZaiAvailable()) {
+          return res
+            .status(503)
+            .json({
+              error: "Z.AI provider not available (missing ZAI_API_KEY)",
+              code: "PROVIDER_NOT_AVAILABLE",
+            });
+        }
+        directProvider = new ZaiVisionProvider();
+      } else if (requestedProvider === "groq") {
+        if (!isGroqAvailable())
+          return res
+            .status(503)
+            .json({ error: "Groq not available", code: "PROVIDER_NOT_AVAILABLE" });
+        directProvider = new GroqVisionProvider();
+      } else if (requestedProvider === "gemini") {
+        if (!isGeminiAvailable())
+          return res
+            .status(503)
+            .json({ error: "Gemini not available", code: "PROVIDER_NOT_AVAILABLE" });
+        directProvider = new GeminiVisionProvider();
+      } else {
+        directProvider = new MockVisionProvider();
+      }
+      const result = await directProvider.analyzeFridgeImage({
+        imageBase64: base64Part,
+        mimeType: effectiveMime,
+      });
+      if (result.ingredients.length === 0 && result.uncertainItems.length === 0) {
+        return res
+          .status(422)
+          .json({ error: "No recognizable food found", code: "NO_FOOD_DETECTED", data: result });
+      }
+      return res.json({
+        data: result,
+        meta: {
+          provider: directProvider.name,
+          modelId: directProvider.modelId,
+          cached: false,
+          requestedProvider,
+        },
       });
     }
 
@@ -150,6 +217,8 @@ router.get("/status", (_req, res) => {
       fallback: "groq",
       geminiAvailable: isGeminiAvailable(),
       groqAvailable: isGroqAvailable(),
+      zaiAvailable: isZaiAvailable(),
+      benchmarkProviders: ["gemini", "groq", "zai"],
     },
   });
 });

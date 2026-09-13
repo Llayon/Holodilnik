@@ -1,5 +1,9 @@
 import crypto from "node:crypto";
-import { VISION_PROMPT_VERSION, RECIPE_PROMPT_VERSION } from "./config.js";
+import {
+  VISION_PROMPT_VERSION,
+  ZAI_VISION_PROMPT_VERSION,
+  RECIPE_PROMPT_VERSION,
+} from "./config.js";
 import type { FridgeAnalysisResult, RecommendationsResult } from "../shared/types.js";
 
 type VisionCacheValue = FridgeAnalysisResult;
@@ -17,6 +21,11 @@ const MAX_ENTRIES = 100;
 
 function sha256Hex(input: string | Buffer): string {
   return crypto.createHash("sha256").update(input).digest("hex");
+}
+
+function getVisionPromptVersion(provider: string): string {
+  if (provider === "zai") return ZAI_VISION_PROMPT_VERSION;
+  return VISION_PROMPT_VERSION;
 }
 
 function stableVisionKey(params: {
@@ -38,7 +47,8 @@ function stableVisionKey(params: {
   } catch {
     hash = sha256Hex(normalized);
   }
-  return `vision:${params.provider}:${params.modelId}:${VISION_PROMPT_VERSION}:${hash}`;
+  const promptVersion = getVisionPromptVersion(params.provider);
+  return `vision:${params.provider}:${params.modelId}:${promptVersion}:${hash}`;
 }
 
 function stableRecipeKey(params: {

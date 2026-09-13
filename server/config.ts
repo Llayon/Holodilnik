@@ -19,14 +19,24 @@ export const config = {
   maxImageBytes: 8 * 1024 * 1024, // 8MB
 };
 
+function isValidKey(key: string): boolean {
+  if (!key) return false;
+  // Reject obvious placeholders or non-ASCII keys (Groq keys are gsk_... ASCII)
+  if (/[^\x00-\x7F]/.test(key)) return false;
+  if (key.includes("твой") || key.includes("YOUR") || key.toLowerCase().includes("placeholder"))
+    return false;
+  if (key.trim().length < 20) return false;
+  return true;
+}
+
 export function isGeminiAvailable(): boolean {
   if (config.mockMode) return false;
-  return !!config.geminiApiKey;
+  return isValidKey(config.geminiApiKey);
 }
 
 export function isGroqAvailable(): boolean {
   if (config.mockMode) return false;
-  return !!config.groqApiKey;
+  return isValidKey(config.groqApiKey);
 }
 
 export function isMockMode(): boolean {
@@ -46,12 +56,21 @@ export function logConfig(): void {
   if (!config.geminiApiKey) {
     console.log("[config] GEMINI_API_KEY not set -> Gemini vision primary unavailable");
   }
-  if (!config.groqApiKey) {
-    console.log(
-      "[config] GROQ_API_KEY not set -> Groq recipes primary unavailable (will fallback)",
-    );
+  if (!isGroqAvailable()) {
+    if (!config.groqApiKey) {
+      console.log(
+        "[config] GROQ_API_KEY not set -> Groq recipes primary unavailable (will fallback)",
+      );
+    } else {
+      console.log(
+        "[config] GROQ_API_KEY looks invalid (non-ASCII or placeholder) -> treating as unavailable, check .env.local is gsk_... ASCII",
+      );
+    }
+  }
+  if (!isGeminiAvailable() && config.geminiApiKey) {
+    console.log("[config] GEMINI_API_KEY looks invalid -> check .env.local");
   }
   if (isMockMode()) {
-    console.log("[config] No provider keys -> running in MOCK mode");
+    console.log("[config] No valid provider keys -> running in MOCK mode");
   }
 }

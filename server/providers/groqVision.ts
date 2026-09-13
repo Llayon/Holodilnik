@@ -264,12 +264,20 @@ export class GroqVisionProvider implements VisionProvider {
         meta: { provider: "groq", modelId: this.modelId },
       };
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const raw = err instanceof Error ? err.message : String(err);
+      if (raw.includes("ByteString")) {
+        console.error(
+          "[groqVision] invalid GROQ_API_KEY (non-ASCII/placeholder):",
+          raw.slice(0, 500),
+        );
+        throw new Error(
+          "Groq vision failed: 401 Invalid GROQ_API_KEY (contains non-ASCII or placeholder like твой_ключ), check .env.local is gsk_... ASCII",
+        );
+      }
+      const message = raw;
       const status = extractStatus(err);
-      // Normalize to recognizable pattern for router: include status code
       const enriched = status ? `${status} ${message}` : message;
       console.error("[groqVision] final error:", enriched.slice(0, 2000));
-      // Preserve rate headers if present
       throw new Error(`Groq vision failed: ${enriched}`);
     }
   }

@@ -247,7 +247,17 @@ export class GroqRecipeProvider implements RecipeProvider {
         meta: { provider: "groq", modelId: this.modelId },
       };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const raw = err instanceof Error ? err.message : String(err);
+      if (raw.includes("ByteString")) {
+        console.error(
+          "[groqRecipe] invalid GROQ_API_KEY (non-ASCII/placeholder):",
+          raw.slice(0, 500),
+        );
+        throw new Error(
+          "Groq recipe generation failed: 401 Invalid GROQ_API_KEY (contains non-ASCII or placeholder), check .env.local is gsk_... ASCII",
+        );
+      }
+      const msg = raw;
       const status = extractStatus(err);
       const enriched = status ? `${status} ${msg}` : msg;
       console.error("[groqRecipe] error:", enriched.slice(0, 2000));

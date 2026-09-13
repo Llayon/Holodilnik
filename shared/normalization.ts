@@ -13,6 +13,8 @@ export interface NormalizedIngredient {
 const CANONICAL_DISPLAY: Record<string, string> = {
   egg: "Яйца",
   tomato: "Помидоры",
+  cherry_tomato: "Помидоры черри",
+  yellow_tomato: "Жёлтые помидоры",
   cheese: "Сыр",
   chicken: "Курица",
   zucchini: "Кабачок",
@@ -28,6 +30,7 @@ const CANONICAL_DISPLAY: Record<string, string> = {
   mushroom: "Грибы",
   sausage: "Колбаса",
   ham: "Ветчина",
+  cutlet: "Котлета",
   yogurt: "Йогурт",
   cream: "Сливки",
   beef: "Говядина",
@@ -230,10 +233,43 @@ const ALIASES: Record<string, string> = {
   творог: "cottage_cheese",
   cottage_cheese: "cottage_cheese",
   "cottage cheese": "cottage_cheese",
+
+  // variant tomatoes - keep distinct canonical for display, future variant model may alias to tomato for matching
+  cherry_tomato: "cherry_tomato",
+  "cherry tomato": "cherry_tomato",
+  помидоры_черри: "cherry_tomato",
+  "помидоры черри": "cherry_tomato",
+  черри: "cherry_tomato",
+  yellow_tomato: "yellow_tomato",
+  "yellow tomato": "yellow_tomato",
+  желтый_помидор: "yellow_tomato",
+  желтые_помидоры: "yellow_tomato",
+  "жёлтый помидор": "yellow_tomato",
+  "жёлтые помидоры": "yellow_tomato",
+  "желтый помидор": "yellow_tomato",
+  "желтые помидоры": "yellow_tomato",
+
+  // cutlet
+  cutlet: "cutlet",
+  cutlets: "cutlet",
+  котлета: "cutlet",
+  котлеты: "cutlet",
 };
 
 function normalizeKey(input: string): string {
   return input.toLowerCase().trim().replace(/\s+/g, "_").replace(/ё/g, "е");
+}
+
+function humanizeCanonical(canonical: string): string {
+  // Turn snake_case into Title Case with spaces, no underscores visible to user
+  return canonical
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : ""))
+    .join(" ")
+    .trim();
 }
 
 export function normalizeIngredient(input: string): NormalizedIngredient {
@@ -245,8 +281,7 @@ export function normalizeIngredient(input: string): NormalizedIngredient {
 
   const displayName =
     CANONICAL_DISPLAY[canonicalClean] ??
-    // fallback: capitalize original input
-    input.trim().charAt(0).toUpperCase() + input.trim().slice(1).toLowerCase();
+    (humanizeCanonical(canonicalClean) || humanizeCanonical(input));
 
   return {
     canonicalName: canonicalClean,
@@ -255,7 +290,8 @@ export function normalizeIngredient(input: string): NormalizedIngredient {
 }
 
 export function getDisplayName(canonical: string): string {
-  return CANONICAL_DISPLAY[canonical] ?? canonical;
+  const key = canonical.toLowerCase().replace(/\s+/g, "_");
+  return CANONICAL_DISPLAY[key] ?? humanizeCanonical(key);
 }
 
 export function isKnownCanonical(canonical: string): boolean {

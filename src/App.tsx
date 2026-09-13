@@ -30,8 +30,14 @@ export default function App() {
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingRecs, setLoadingRecs] = useState(false);
-  const [providerMode, setProviderMode] = useState<"mock" | "gemini" | "unknown">("unknown");
+  const [providerMode, setProviderMode] = useState<"mock" | "gemini" | "groq" | "unknown">(
+    "unknown",
+  );
   const [modelId, setModelId] = useState<string>("");
+  const [healthVision, setHealthVision] = useState<string | null>(null);
+  const [healthRecipes, setHealthRecipes] = useState<string | null>(null);
+  const [lastVisionProvider, setLastVisionProvider] = useState<string | null>(null);
+  const [lastRecipeProvider, setLastRecipeProvider] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -40,8 +46,17 @@ export default function App() {
   useEffect(() => {
     checkHealth()
       .then((h) => {
-        setProviderMode(h.mockMode ? "mock" : "gemini");
+        const mode = h.mockMode ? "mock" : (h.provider as "gemini" | "groq" | "mock");
+        setProviderMode(mode ?? "unknown");
         setModelId(h.modelId);
+        if (h.vision)
+          setHealthVision(
+            `${h.vision.primary.toUpperCase()}${h.vision.fallback ? ` → ${h.vision.fallback.toUpperCase()}` : ""}`,
+          );
+        if (h.recipes)
+          setHealthRecipes(
+            `${h.recipes.primary.toUpperCase()}${h.recipes.fallback ? ` → ${h.recipes.fallback.toUpperCase()}` : ""}`,
+          );
       })
       .catch(() => setProviderMode("unknown"));
   }, []);
@@ -88,6 +103,7 @@ export default function App() {
       const { data, meta } = await analyzeFridge({ imageBase64, mimeType: imageMime });
       setProviderMode(meta.provider as never);
       setModelId(meta.modelId);
+      setLastVisionProvider(meta.provider);
       setAnalysis(data);
       setIngredients(
         data.ingredients.map((i) => ({
@@ -146,6 +162,7 @@ export default function App() {
       const { data, meta } = await getRecommendations({ ingredients });
       setProviderMode(meta.provider as never);
       setModelId(meta.modelId);
+      setLastRecipeProvider(meta.provider);
       setRecipes(data.recipes as unknown as Recipe[]);
       setStep("recommendations");
     } catch (e) {
@@ -173,17 +190,50 @@ export default function App() {
     setError(null);
   };
 
+  // Dev-only provider routing diagnostics (not user-facing infrastructure)
+  const isDev = (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV;
+
   return (
     <div className="app-shell">
       <header className="app-header">
         <div className="logo">Холодильник</div>
         <div
-          className={`mock-badge ${providerMode === "mock" ? "mock" : providerMode === "gemini" ? "live" : ""}`}
+          className={`mock-badge ${providerMode === "mock" ? "mock" : providerMode === "gemini" || providerMode === "groq" ? "live" : ""}`}
           data-testid="provider-badge"
         >
-          {providerMode === "mock" ? "MOCK" : providerMode === "gemini" ? `LIVE · ${modelId}` : "…"}
+          {providerMode === "mock"
+            ? "MOCK"
+            : providerMode === "gemini" || providerMode === "groq"
+              ? `LIVE · ${modelId}`
+              : "…"}
         </div>
       </header>
+      {isDev && (healthVision || healthRecipes) && (
+        <div
+          style={{
+            fontSize: 10,
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
+            color: "var(--muted)",
+            textAlign: "center",
+            padding: "4px 8px",
+            background: "var(--bg-subtle, #f8f8f8)",
+            borderBottom: "1px solid var(--border, #eee)",
+          }}
+          data-testid="dev-provider-routing"
+        >
+          {healthVision && <span>VISION · {healthVision}</span>}
+          {healthVision && healthRecipes && <span style={{ margin: "0 8px" }}>·</span>}
+          {healthRecipes && <span>RECIPES · {healthRecipes}</span>}
+          {(lastVisionProvider || lastRecipeProvider) && (
+            <span style={{ marginLeft: 8, opacity: 0.7 }}>
+              | last: {lastVisionProvider ? `VISION ${lastVisionProvider.toUpperCase()}` : ""}
+              {lastVisionProvider && lastRecipeProvider ? " · " : ""}
+              {lastRecipeProvider ? `RECIPES ${lastRecipeProvider.toUpperCase()}` : ""}
+            </span>
+          )}
+        </div>
+      )}
 
       <main className="app-main">
         {step === "landing" && (

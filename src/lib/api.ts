@@ -1,6 +1,6 @@
 import type { FridgeAnalysisResult, RecommendationsResult } from "../../shared/types.js";
 
-export type ApiMode = "mock" | "gemini" | "unknown";
+export type ApiMode = "mock" | "gemini" | "groq" | "unknown";
 
 export interface ApiError {
   message: string;
@@ -12,6 +12,9 @@ export async function checkHealth(): Promise<{
   provider: string;
   mockMode: boolean;
   modelId: string;
+  vision?: { primary: string; fallback: string; geminiAvailable: boolean; groqAvailable: boolean };
+  recipes?: { primary: string; fallback: string; groqAvailable: boolean; geminiAvailable: boolean };
+  models?: { gemini: string; groq: string };
 }> {
   const res = await fetch("/api/health");
   if (!res.ok) throw new Error("health check failed");
@@ -20,7 +23,7 @@ export async function checkHealth(): Promise<{
 
 export async function analyzeFridge(params: { imageBase64: string; mimeType: string }): Promise<{
   data: FridgeAnalysisResult;
-  meta: { provider: ApiMode; modelId: string };
+  meta: { provider: ApiMode; modelId: string; cached?: boolean };
 }> {
   const res = await fetch("/api/fridge/analyze", {
     method: "POST",
@@ -48,7 +51,7 @@ export async function getRecommendations(params: {
   ingredients: Array<{ canonicalName: string; displayName: string }>;
 }): Promise<{
   data: RecommendationsResult;
-  meta: { provider: ApiMode; modelId: string };
+  meta: { provider: ApiMode; modelId: string; cached?: boolean };
 }> {
   const res = await fetch("/api/recommendations", {
     method: "POST",
@@ -83,7 +86,10 @@ export function humanizeApiError(e: unknown): string {
       case "INVALID_IMAGE":
         return "Не похоже на фото. Попробуйте другое изображение.";
       case "UNSUPPORTED_MIME":
-        return e.message || "HEIC не поддерживается — откройте фото в галерее и сохраните как JPEG, затем загрузите снова.";
+        return (
+          e.message ||
+          "HEIC не поддерживается — откройте фото в галерее и сохраните как JPEG, затем загрузите снова."
+        );
       case "NO_FOOD_DETECTED":
         return "Не нашёл еду на фото. Попробуйте снять ближе или с лучшим светом.";
       case "RATE_LIMITED":
@@ -91,7 +97,10 @@ export function humanizeApiError(e: unknown): string {
       case "INVALID_PROVIDER_RESPONSE":
         return "Не удалось распознать содержимое — попробуйте ещё раз.";
       case "PROVIDER_ERROR":
-        return e.message || "Ошибка анализа изображения — попробуйте другое фото (JPEG/PNG, хорошее освещение)";
+        return (
+          e.message ||
+          "Ошибка анализа изображения — попробуйте другое фото (JPEG/PNG, хорошее освещение)"
+        );
       default:
         return e.message || "Что-то пошло не так. Попробуйте ещё раз.";
     }

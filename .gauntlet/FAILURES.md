@@ -105,9 +105,27 @@
 - **Cause:** Same placeholder handling as Groq.
 - **Fix:** Reused `isValidKey` for `isZaiAvailable()`, same warning, and added `ByteString` catch in `ZaiVisionProvider` to throw `401 Invalid ZAI_API_KEY` hint. Direct fetch with `Authorization: Bearer` now validates ASCII before request.
 
+## F-019: Groq strict schema 400 for optional fields
+
+- **Symptom:** `Groq vision failed: 400 invalid JSON schema for response_format: 'fridge_analysis': /properties/ingredients/items/required: required is required to be supplied and to be an array including every key in properties. The following properties must be listed in required: quantityGuess` (and later `reason` for uncertainItems).
+- **Cause:** `getGroqJsonSchema()` had `quantityGuess` as `anyOf` optional and `reason` optional not in `required`, but Groq `strict:true` requires every property in `properties` to be listed in `required` (per https://console.groq.com/docs/structured-outputs). Same for `uncertainItems` `reason`.
+- **Fix:** Keep strict attempt first, catch 400 and retry with `strict:false` (best-effort) — already implemented in `GroqVisionProvider` (`tryCall(true)` → catch 400 → `tryCall(false)`). Works; strict documented as incompatible with optional fields. No change to Zod schema (quantityGuess remains optional).
+
+## F-020: Z.AI 1305 overloaded transient
+
+- **Symptom:** `ZAI vision failed: 429 code 1305 The service may be temporarily overloaded, please try again later` — 2 of 5 attempts in tri-benchmark failed, 1 succeeded on immediate retry, 1 succeeded on 8s retry.
+- **Cause:** Free `glm-4.6v-flash` is Completely Free but with rate/daily limits; 1305 is transient overload per https://docs.z.ai/api-reference/api-code.
+- **Fix:** Benchmark harness reports 1305 explicitly (not silent fallback), retries once after 8s, succeeds. Cache ensures second same-image run is `cached:true` with no new quota.
+
+## F-021: Gemini daily quota 20 exceeded
+
+- **Symptom:** `Gemini vision failed: 429 RESOURCE_EXHAUSTED GenerateRequestsPerDayPerProjectPerModel-FreeTier quotaValue 20` — Gemini out of quota for today, no result for tri-benchmark.
+- **Cause:** Free-tier daily limit 20 (also 5/min) hit by earlier manual/UI tests.
+- **Fix:** Documented as expected; Groq/ZAI fallback still works for production (Groq primary for recipes, Groq fallback for vision). Next benchmark should be on new day or with quota reset; do not claim global accuracy from one image where Gemini unavailable.
+
 ## Next Watch
 
 - If live Gemini returns `NO_FOOD_DETECTED` too often, tune vision prompt confidence threshold or add `mediaResolution` param.
 - If recipe generation fails slot validation (duplicate slots), add retry or repair step.
 - Groq/ZAI vision may occasionally return English displayName; normalization re-maps to Russian but monitor for new unknown canonicals → add alias/display.
-- Z.AI free tier limits (1302 rate limit, 1303 high frequency, 1304 daily limit, 1305 overloaded, 1308 usage limit) — benchmark harness reports them explicitly, not via silent fallback.
+- Z.AI free tier limits (1302/1305 etc) — harness reports explicitly, consider exponential backoff if overload persists.

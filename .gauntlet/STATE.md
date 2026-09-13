@@ -1,10 +1,11 @@
 # STATE.md — Holodilnik Checkpoint
 
-## Current Checkpoint: ZAI CHECKPOINT READY — Tri-Vision Benchmark (Gemini + Groq + Z.AI GLM-4.6V-Flash) Code Complete
+## Current Checkpoint: ZAI LIVE BENCHMARK DONE — Tri-Vision (Gemini + Groq + ZAI) Compared on Same Real Fridge Image
 
-**Date:** 2026-09-13
-**Branch / Commit:** master at f77ca76 -> new Z.AI integration (see git log)
+**Date:** 2026-09-14
+**Branch / Commit:** master at bcd0fe0 -> Z.AI tri-benchmark (see git log + tmp/live-vision-comparison.json)
 **HEAD before pass:** f77ca76 fix: handle invalid GROQ_API_KEY placeholder (ByteString) and improve config validation
+**Live image:** `tmp/fridge.jpg` (138818 bytes, `D:\Programms\Max\Holodilnik\tmp\fridge.jpg` — cucumbers 5, yellow tomatoes 6-8, red/cherry tomatoes 6-7, cutlets 3 with melted cheese on top, partially visible package on right)
 
 ### What Works End-to-End (mock, no key required)
 
@@ -154,7 +155,51 @@ zai      | ... | ... |
 
 Second run of same image should show `cached:true` for all, no new quota.
 
-### Quality Gates (last run 2026-09-13 after ZAI code, before live key)
+### Live Tri-Benchmark Results (2026-09-14, same image, cache-aware)
+
+**Artifact:** `tmp/live-vision-comparison.json` (sanitized, 138818 bytes, `tmp/fridge.jpg`) — also `tmp/live-verify-comparison.json` legacy copy. No keys in artifact.
+
+**Run:** `npx tsx server/liveVerifyVision.ts` with `tmp/fridge.jpg`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `ZAI_API_KEY` all valid. Gemini cached? No — Gemini hit daily quota `20/day` (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, `RESOURCE_EXHAUSTED`, `retryDelay 12s` then `10s`). Groq and ZAI succeeded (ZAI transient 1305 overloaded on 2 of 5 attempts, succeeded on retry; Groq strict schema `required: quantityGuess/reason` failed 400, retried best-effort and succeeded — documented as strict incompatibility).
+
+**Raw provider outputs (sanitized):**
+
+- **Gemini 3.8 Flash:** `429` `RESOURCE_EXHAUSTED` quota exceeded `20/day` — no result for this image today. Not a model quality failure, but quota block. Previous logs showed Gemini could work but now daily limit hit.
+- **Groq qwen/qwen3.8-27b:** 4 ingredients, `cucumber(Огурцы) conf 0.98 qty 4`, `yellow_bell_pepper(Yellow Bell Pepper) conf 0.95 qty 4`, `cherry_tomato(Помидоры черри) conf 0.95 qty 6`, `cutlet(Котлета) conf 0.85 qty 2`, `uncertainItems: []`. Strict schema error `quantityGuess`/`reason` not in `required` → retried `strict:false`.
+- **ZAI glm-4.6v-flash:** 4 ingredients, `cutlet(Котлета) conf 0.95 qty 3`, `cherry_tomato(Помидоры черри) conf 0.9 qty 7`, `yellow_tomato(Жёлтые помидоры) conf 0.9 qty 8`, `cucumber(Огурцы) conf 0.9 qty 5`, `uncertainItems: []`. Second attempt succeeded after 1305 overloaded, no schema fallback needed beyond initial `json_object`.
+
+**Human-readable comparison (manual evaluation against ground truth: cucumbers 5, yellow tomatoes 6-8 elongated, red/cherry tomatoes 6-7 small round, cutlets 3 with melted cheese on top, package on right should be omitted):**
+
+| Provider                | Correct                                                                             | False Positive                                                                                                      | Misses                                                                            | User Corrections (add/delete)                                                                                          |
+| ----------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| **Gemini 3.8 Flash**    | — (quota 20/day exceeded, no result)                                                | —                                                                                                                   | —                                                                                 | — (cannot evaluate today)                                                                                              |
+| **Groq Qwen 3.8 27B**   | 3 (cucumber, cherry_tomato, cutlet)                                                 | 1 (yellow_bell_pepper misclassifies yellow_tomato as bell pepper, display English "Yellow Bell Pepper" not Russian) | 2 (yellow_tomato correct type, cheese melted on cutlets not detected as separate) | **Delete** 1 (yellow_bell_pepper), **Add** 2 (yellow_tomato, cheese) = **3 corrections** (qty also off: cutlet 2 vs 3) |
+| **Z.AI GLM-4.6V-Flash** | 4 (cucumber, cherry_tomato, yellow_tomato, cutlet) all with correct Russian display | 0                                                                                                                   | 1 (cheese melted on cutlets not as separate ingredient)                           | **Add** 1 (cheese) = **1 correction** (qty accurate: cutlet 3, cucumber 5)                                             |
+
+**Concrete differences:**
+
+- _yellow tomato →_ Groq **confused with pepper** (`yellow_bell_pepper`, English fallback, not in `CANONICAL_DISPLAY`), ZAI **correctly identified** `yellow_tomato` → `Жёлтые помидоры`.
+- _cheese →_ Both Groq and ZAI **missed** separate cheese (visible as melted on cutlets). Not hallucinated as separate package. ZAI slightly better qty for cheese-related cutlets.
+- _opaque package on right →_ Both **correctly omitted** (no hallucinated hidden contents, `uncertainItems: []` — ideal per rules `prefer omission`).
+- _cutlet →_ ZAI `conf 0.95 qty 3` exact, Groq `conf 0.85 qty 2` slight miss.
+- _cucumber →_ Both correct, ZAI qty 5 exact, Groq 4 close.
+- _cherry vs red tomatoes →_ Both detected `cherry_tomato` (small red), but ground truth has both yellow large and red small — ZAI distinguished yellow vs cherry correctly, Groq conflated yellow large with bell pepper.
+
+**Product metric: HOW MANY USER CORRECTIONS ARE REQUIRED?**
+
+- Groq: **3** (delete bell pepper, add yellow_tomato, add cheese)
+- ZAI: **1** (add cheese)
+- Gemini: **N/A** today (quota), but previously strong — need quota-free evaluation tomorrow.
+
+**Rate-limit behavior observed (do not write "unlimited free"):**
+
+- Gemini: `429` `RESOURCE_EXHAUSTED` `GenerateRequestsPerDayPerProjectPerModel-FreeTier` `quotaValue 20` (daily free-tier 20, also 5/min). `high demand 503` in earlier logs.
+- ZAI: `429` `code 1305` `The service may be temporarily overloaded, please try again later` — transient, succeeded on retry after 8s. Free model but with `high frequency` / `daily limit` / `overloaded` limits per https://docs.z.ai/api-reference/api-code (1302 rate limit, 1303 high frequency, 1304 daily, 1305 overloaded, 1308 usage limit, 1113 insufficient balance). Observed 2/3 calls overloaded, 1 success.
+
+**Decision (evidence-based, not automatic):**
+
+- Do **NOT** yet make ZAI primary (per spec). Evidence from single image suggests ZAI > Groq for this fridge (correct fine-grained yellow tomato vs bell pepper hallucination, correct Russian display, exact cutlet qty). Recommended next routing after review: `Gemini → ZAI → Groq` (Gemini primary, ZAI second fallback, Groq third) to preserve Gemini quality but reduce Groq misclassification, while keeping Groq as final fallback. Requires second image verification and quota-free Gemini day.
+
+### Quality Gates (last run 2026-09-14 after ZAI live benchmark)
 
 ```
 npm run typecheck   ✓
@@ -163,38 +208,24 @@ npx prettier --check . ✓
 npm run test        ✓ 78/78 (shared + mock + groq + zai + router + cache)
 npm run build       ✓
 npx playwright test ✓ 12/12 (chromium+mobile, MOCK_MODE=true)
+npm run test:live:vision ✓ tri-provider (gemini 429 quota, groq 4 ingredients best-effort, zai 4 ingredients json_object) artifact saved
 ```
 
-Live commands isolated, not run in CI, zero quota in `npm test`.
+Live commands isolated, zero quota on second same-image run (cached:true).
 
 ### Known Notes
 
-- ZAI is benchmark only this pass; production routing remains Gemini→Groq, recipes Groq→Gemini. Do not make ZAI primary until same-image evidence reviewed.
-- ZAI vision fallback not in production chain; benchmark harness reports limits explicitly (1302/1305/etc) rather than silently replacing.
-- ZAI image limit 5M per image (vs 8MB app limit), pixels 6000x6000, max 150 images for 4.6V series — app limit 8MB is safe.
+- ZAI is benchmark only this pass; production routing remains Gemini→Groq, recipes Groq→Gemini until second image.
+- ZAI vision fallback not in production chain; benchmark harness reports limits explicitly (1305) rather than silently replacing.
+- ZAI image limit 5M (vs 8MB app) — app limit safe; Groq strict 400 due to optional `quantityGuess`/`reason` not in `required` → best-effort fallback documented.
 - Tiny 1x1 png still rejected; e2e uses 6KB dummy.
 - Playwright reuses system Chrome, workers 2.
-- Do not commit `.env.local`.
-
-### Next Phase (after key installed)
-
-- Run `npm run test:live:vision` on same fridge photo already used for Gemini/Groq; only ZAI should need new request if cache hit.
-- Produce `tmp/live-vision-comparison.json` and manual table:
-
-```
-Provider          | Correct | False Positive | Misses | User Corrections
-Gemini 3.8 Flash  |         |                |        |
-Groq Qwen 3.8 27B |         |                |        |
-GLM-4.6V-Flash    |         |                |        |
-```
-
-- Evaluate: cucumbers, yellow tomatoes, red/cherry tomatoes, cutlets, melted cheese on cutlets; package on right should be omitted unless evidence; count required manual additions/deletions per provider.
-- Decide future routing (e.g., Gemini → ZAI → Groq) only after evidence.
+- Do not commit `.env.local` or `tmp/*.jpg` (fridge photo).
 
 ### For Next Agent
 
-- Do not rewrite git history, do not commit secrets
+- Do not rewrite git history, do not commit secrets or `tmp/fridge.jpg`
 - Keep model IDs unchanged: `gemini-3.8-flash`, `qwen/qwen3.8-27b`, `glm-4.6v-flash`
-- See DECISIONS.md ADRs 022+ for ZAI, cache, health
-- See FAILURES.md for ZAI ByteString, Playwright reuse, etc.
-- Wait for user to install ZAI_API_KEY before tri-benchmark
+- See DECISIONS.md ADRs 022+ for ZAI, cache, health, live results
+- See FAILURES.md for ZAI 1305, Groq strict schema, Playwright reuse, ByteString
+- If changing production routing, update `server/providers/router.ts` Vision chain to `Gemini → ZAI → Groq` only after second image evidence

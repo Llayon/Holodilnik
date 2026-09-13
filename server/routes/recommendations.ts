@@ -1,17 +1,8 @@
 import { Router } from "express";
-import { config, isMockMode } from "../config.js";
 import { recommendationsRequestSchema } from "../../shared/schemas.js";
-import { MockRecipeProvider } from "../providers/mockRecipe.js";
-import { GeminiRecipeProvider } from "../providers/geminiRecipe.js";
+import { RecipeProviderChain } from "../providers/router.js";
 
 const router = Router();
-
-function getRecipeProvider() {
-  if (isMockMode()) {
-    return new MockRecipeProvider();
-  }
-  return new GeminiRecipeProvider(config.geminiApiKey);
-}
 
 router.post("/", async (req, res) => {
   try {
@@ -33,8 +24,8 @@ router.post("/", async (req, res) => {
       });
     }
 
-    const provider = getRecipeProvider();
-    const result = await provider.generateRecommendations({ ingredients });
+    const chain = new RecipeProviderChain();
+    const { result, provider, modelId, cached } = await chain.generate({ ingredients });
 
     // Validate exactly 3
     if (result.recipes.length !== 3) {
@@ -44,7 +35,16 @@ router.post("/", async (req, res) => {
       });
     }
 
-    return res.json({ data: result, meta: { provider: provider.name, modelId: provider.modelId } });
+    return res.json({
+      data: result,
+      meta: {
+        provider,
+        modelId,
+        cached,
+        primary: chain.getPrimaryName(),
+        fallback: chain.getFallbackName(),
+      },
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[recommendations] error:", message);

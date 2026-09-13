@@ -1,17 +1,9 @@
 import { Router } from "express";
-import { config, isMockMode } from "../config.js";
+import { config, isMockMode, isGeminiAvailable, isGroqAvailable } from "../config.js";
 import { analyzeRequestSchema } from "../../shared/schemas.js";
-import { MockVisionProvider } from "../providers/mockVision.js";
-import { GeminiVisionProvider } from "../providers/geminiVision.js";
+import { VisionProviderChain } from "../providers/router.js";
 
 const router = Router();
-
-function getVisionProvider() {
-  if (isMockMode()) {
-    return new MockVisionProvider();
-  }
-  return new GeminiVisionProvider(config.geminiApiKey);
-}
 
 router.post("/analyze", async (req, res) => {
   let effectiveMime = "image/jpeg";
@@ -58,7 +50,8 @@ router.post("/analyze", async (req, res) => {
     }
     if (isHeicMime || isHeicContent) {
       return res.status(400).json({
-        error: "HEIC не поддерживается — откройте фото в галерее iPhone → Поделиться → Сохранить как JPEG, затем загрузите",
+        error:
+          "HEIC не поддерживается — откройте фото в галерее iPhone → Поделиться → Сохранить как JPEG, затем загрузите",
         code: "UNSUPPORTED_MIME",
       });
     }
@@ -69,8 +62,8 @@ router.post("/analyze", async (req, res) => {
       });
     }
 
-    const provider = getVisionProvider();
-    const result = await provider.analyzeFridgeImage({
+    const chain = new VisionProviderChain();
+    const { result, provider, modelId, cached } = await chain.analyze({
       imageBase64: base64Part,
       mimeType: effectiveMime,
     });
@@ -84,7 +77,16 @@ router.post("/analyze", async (req, res) => {
       });
     }
 
-    return res.json({ data: result, meta: { provider: provider.name, modelId: provider.modelId } });
+    return res.json({
+      data: result,
+      meta: {
+        provider,
+        modelId,
+        cached,
+        primary: chain.getPrimaryName(),
+        fallback: chain.getFallbackName(),
+      },
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[fridge/analyze] error:", message);
@@ -134,9 +136,21 @@ router.post("/analyze", async (req, res) => {
 
 router.get("/status", (_req, res) => {
   res.json({
-    provider: isMockMode() ? "mock" : "gemini",
+    provider: isMockMode()
+      ? "mock"
+      : isGeminiAvailable()
+        ? "gemini"
+        : isGroqAvailable()
+          ? "groq"
+          : "mock",
     modelId: config.modelId,
     mockMode: isMockMode(),
+    vision: {
+      primary: "gemini",
+      fallback: "groq",
+      geminiAvailable: isGeminiAvailable(),
+      groqAvailable: isGroqAvailable(),
+    },
   });
 });
 

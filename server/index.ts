@@ -4,7 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fridgeRouter from "./routes/fridge.js";
 import recommendationsRouter from "./routes/recommendations.js";
-import { config, logConfig } from "./config.js";
+import { config, logConfig, isMockMode, isGeminiAvailable, isGroqAvailable } from "./config.js";
+import { getCacheStats, clearAllCaches } from "./cache.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,12 +19,46 @@ app.use(express.urlencoded({ extended: true, limit: "12mb" }));
 
 // Health
 app.get("/api/health", (_req, res) => {
+  const mockMode = isMockMode();
+  const geminiAvail = isGeminiAvailable();
+  const groqAvail = isGroqAvailable();
   res.json({
     status: "ok",
-    provider: config.geminiApiKey ? (config.mockMode ? "mock" : "gemini") : "mock",
+    // legacy fields for backward compat
+    provider: mockMode ? "mock" : geminiAvail ? "gemini" : groqAvail ? "groq" : "mock",
     modelId: config.modelId,
-    mockMode: !config.geminiApiKey || config.mockMode,
+    mockMode,
+    // new detailed diagnostics (no secrets)
+    vision: {
+      primary: "gemini",
+      fallback: "groq",
+      geminiAvailable: geminiAvail,
+      groqAvailable: groqAvail,
+      primaryAvailable: geminiAvail,
+    },
+    recipes: {
+      primary: "groq",
+      fallback: "gemini",
+      groqAvailable: groqAvail,
+      geminiAvailable: geminiAvail,
+      primaryAvailable: groqAvail,
+    },
+    models: {
+      gemini: config.modelId,
+      groq: config.groqModelId,
+    },
+    cache: getCacheStats(),
   });
+});
+
+// Dev cache reset (obvious mechanism, no secrets)
+app.delete("/api/cache", (_req, res) => {
+  clearAllCaches();
+  res.json({ status: "cleared", cache: getCacheStats() });
+});
+app.post("/api/cache/clear", (_req, res) => {
+  clearAllCaches();
+  res.json({ status: "cleared", cache: getCacheStats() });
 });
 
 // Routes

@@ -18,12 +18,14 @@ export interface UncertainItem {
   reason?: string;
 }
 
+export type ProviderName = "mock" | "gemini" | "groq";
+
 export interface FridgeAnalysisResult {
   ingredients: DetectedIngredient[];
   uncertainItems: UncertainItem[];
   // meta for debug, not shown to user
   meta?: {
-    provider: "mock" | "gemini";
+    provider: ProviderName;
     modelId?: string;
   };
 }
@@ -54,7 +56,7 @@ export interface Recipe {
 export interface RecommendationsResult {
   recipes: [Recipe, Recipe, Recipe]; // exactly 3
   meta?: {
-    provider: "mock" | "gemini";
+    provider: ProviderName;
     modelId?: string;
   };
 }

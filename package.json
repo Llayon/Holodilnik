@@ -20,13 +20,15 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "test:live:groq": "tsx server/liveVerifyGroq.ts"
   },
   "dependencies": {
     "@google/genai": "^1.13.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
+    "groq-sdk": "^1.6.0",
     "multer": "^2.0.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

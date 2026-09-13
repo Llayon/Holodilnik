@@ -1,7 +1,11 @@
-import type { FridgeAnalysisResult, RecommendationsResult } from "../../shared/types.js";
+import type {
+  FridgeAnalysisResult,
+  RecommendationsResult,
+  ProviderName,
+} from "../../shared/types.js";
 
 export interface VisionProvider {
-  readonly name: "mock" | "gemini";
+  readonly name: ProviderName;
   readonly modelId: string;
   analyzeFridgeImage(params: {
     imageBase64: string;
@@ -10,7 +14,7 @@ export interface VisionProvider {
 }
 
 export interface RecipeProvider {
-  readonly name: "mock" | "gemini";
+  readonly name: ProviderName;
   readonly modelId: string;
   generateRecommendations(params: {
     ingredients: Array<{ canonicalName: string; displayName: string }>;

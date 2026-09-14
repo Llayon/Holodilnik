@@ -23,7 +23,9 @@
     "test:e2e:ui": "playwright test --ui",
     "test:live:groq": "tsx server/liveVerifyGroq.ts",
     "test:live:zai": "tsx server/liveVerifyVision.ts --provider=zai",
-    "test:live:vision": "tsx server/liveVerifyVision.ts"
+    "test:live:vision": "tsx server/liveVerifyVision.ts",
+    "test:live:vision-gauntlet": "tsx scripts/vision-gauntlet.ts",
+    "compress:photo": "tsx scripts/compress-fridge-photo.ts"
   },
   "dependencies": {
     "@google/genai": "^1.13.0",
@@ -53,6 +55,7 @@
     "globals": "^16.3.0",
     "jsdom": "^26.1.0",
     "prettier": "^3.6.2",
+    "sharp": "^0.35.4",
     "tsx": "^4.20.3",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.39.0",

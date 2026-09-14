@@ -42,7 +42,8 @@ confidence: 0..1
 `.trim();
 
 function getGroqJsonSchema() {
-  // Strict schema for Groq structured outputs: all required, additionalProperties false
+  // Strict schema for Groq structured outputs: all properties must be in required for strict:true
+  // quantityGuess and reason are optional in app logic but must be required in strict schema (allow null/empty)
   return {
     type: "object",
     properties: {
@@ -54,13 +55,13 @@ function getGroqJsonSchema() {
             canonicalName: { type: "string", description: "Canonical ingredient ID snake_case" },
             displayName: { type: "string", description: "Display name in Russian" },
             quantityGuess: {
-              anyOf: [{ type: "number" }, { type: "null" }],
-              description: "Estimated quantity",
+              type: ["number", "null"],
+              description: "Estimated quantity, null if unclear",
             },
             confidence: { type: "number", minimum: 0, maximum: 1 },
             visibility: { type: "string", enum: ["clear", "partial", "uncertain"] },
           },
-          required: ["canonicalName", "displayName", "confidence", "visibility"],
+          required: ["canonicalName", "displayName", "quantityGuess", "confidence", "visibility"],
           additionalProperties: false,
         },
       },
@@ -71,9 +72,9 @@ function getGroqJsonSchema() {
           properties: {
             canonicalName: { type: "string" },
             displayName: { type: "string" },
-            reason: { type: "string" },
+            reason: { type: "string", description: "Reason why uncertain, empty if none" },
           },
-          required: ["canonicalName", "displayName"],
+          required: ["canonicalName", "displayName", "reason"],
           additionalProperties: false,
         },
       },

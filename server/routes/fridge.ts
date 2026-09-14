@@ -86,12 +86,10 @@ router.post("/analyze", async (req, res) => {
       let directProvider;
       if (requestedProvider === "zai") {
         if (!isZaiAvailable()) {
-          return res
-            .status(503)
-            .json({
-              error: "Z.AI provider not available (missing ZAI_API_KEY)",
-              code: "PROVIDER_NOT_AVAILABLE",
-            });
+          return res.status(503).json({
+            error: "Z.AI provider not available (missing ZAI_API_KEY)",
+            code: "PROVIDER_NOT_AVAILABLE",
+          });
         }
         directProvider = new ZaiVisionProvider();
       } else if (requestedProvider === "groq") {

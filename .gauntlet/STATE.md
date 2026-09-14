@@ -1,11 +1,12 @@
 # STATE.md — Holodilnik Checkpoint
 
-## Current Checkpoint: ZAI LIVE BENCHMARK DONE — Tri-Vision (Gemini + Groq + ZAI) Compared on Same Real Fridge Image
+## Current Checkpoint: VISION ROUTING GAUNTLET — 3 IMAGES, DECISION READY (ZAI 4 vs Groq 21 vs Gemini 42)
 
 **Date:** 2026-09-14
-**Branch / Commit:** master at bcd0fe0 -> Z.AI tri-benchmark (see git log + tmp/live-vision-comparison.json)
+**Branch / Commit:** master at 1a1bb11 -> vision gauntlet harness + Groq strict fix (see git log + tmp/vision-gauntlet/REPORT.md)
 **HEAD before pass:** f77ca76 fix: handle invalid GROQ_API_KEY placeholder (ByteString) and improve config validation
-**Live image:** `tmp/fridge.jpg` (138818 bytes, `D:\Programms\Max\Holodilnik\tmp\fridge.jpg` — cucumbers 5, yellow tomatoes 6-8, red/cherry tomatoes 6-7, cutlets 3 with melted cheese on top, partially visible package on right)
+**Gauntlet images:** `tmp/vision-gauntlet/input/image-a.jpg` (130050 bytes, bdf58a..., 1086x1448), `image-b.jpg` (131100 bytes, cec0d7..., 1086x1448), `image-c.jpg` (148219 bytes, 27fd92..., 1086x1448) — 5 PNGs in `tmp` compressed via `scripts/compress-fridge-photo.ts --gauntlet` (>6000x6000 → 1920, JPG 80, SHA-256 recorded)
+**Baseline image (not gauntlet):** `tmp/fridge.jpg` (138818 bytes, 712f4e..., 960x1280 — cucumbers 5, yellow tomatoes 6-8, red/cherry 6-7, cutlets 3, package on right) — previous single-image benchmark, now superseded by 3-image gauntlet
 
 ### What Works End-to-End (mock, no key required)
 
@@ -155,77 +156,88 @@ zai      | ... | ... |
 
 Second run of same image should show `cached:true` for all, no new quota.
 
-### Live Tri-Benchmark Results (2026-09-14, same image, cache-aware)
+### 3-Image Vision Routing Gauntlet (NEW, 2026-09-14)
 
-**Artifact:** `tmp/live-vision-comparison.json` (sanitized, 138818 bytes, `tmp/fridge.jpg`) — also `tmp/live-verify-comparison.json` legacy copy. No keys in artifact.
+**Artifacts (sanitized, no keys):** `tmp/vision-gauntlet/input/image-a.jpg` (bdf58a...), `image-b.jpg` (cec0d7...), `image-c.jpg` (27fd92...), `tmp/vision-gauntlet/ground-truth.json`, `tmp/vision-gauntlet/results.json`, `tmp/vision-gauntlet/scorecard.json`, `tmp/vision-gauntlet/REPORT.md`. Baseline `tmp/fridge.jpg` NOT used as gauntlet image per spec. 5 PNGs in `tmp` (`0209d...`, `455f...`, `78b681...`, `8c47...`, `fda5...`) compressed via `scripts/compress-fridge-photo.ts --gauntlet` (PNG 1.9-2MB 1086x1448 → JPG 130-148KB 1086x1448, sharp mozjpeg q80, SHA-256 recorded).
 
-**Run:** `npx tsx server/liveVerifyVision.ts` with `tmp/fridge.jpg`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `ZAI_API_KEY` all valid. Gemini cached? No — Gemini hit daily quota `20/day` (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, `RESOURCE_EXHAUSTED`, `retryDelay 12s` then `10s`). Groq and ZAI succeeded (ZAI transient 1305 overloaded on 2 of 5 attempts, succeeded on retry; Groq strict schema `required: quantityGuess/reason` failed 400, retried best-effort and succeeded — documented as strict incompatibility).
+**Run:** `npx tsx scripts/vision-gauntlet.ts` (rotation: A `gemini→zai→groq`, B `zai→groq→gemini`, C `groq→gemini→zai`, max 3 attempts, 2s/5s/8s backoff, cache-aware). Groq strict fix: `quantityGuess` and `reason` now required (allow null/empty) → `strict:true` now succeeds (previously 400). ZAI `json_object` with fallback without on 1214. Prompt parity `v1`/`zai-vision-v1` same semantic.
 
-**Raw provider outputs (sanitized):**
+**Results (from `tmp/vision-gauntlet/REPORT.md`):**
 
-- **Gemini 3.8 Flash:** `429` `RESOURCE_EXHAUSTED` quota exceeded `20/day` — no result for this image today. Not a model quality failure, but quota block. Previous logs showed Gemini could work but now daily limit hit.
-- **Groq qwen/qwen3.8-27b:** 4 ingredients, `cucumber(Огурцы) conf 0.98 qty 4`, `yellow_bell_pepper(Yellow Bell Pepper) conf 0.95 qty 4`, `cherry_tomato(Помидоры черри) conf 0.95 qty 6`, `cutlet(Котлета) conf 0.85 qty 2`, `uncertainItems: []`. Strict schema error `quantityGuess`/`reason` not in `required` → retried `strict:false`.
-- **ZAI glm-4.6v-flash:** 4 ingredients, `cutlet(Котлета) conf 0.95 qty 3`, `cherry_tomato(Помидоры черри) conf 0.9 qty 7`, `yellow_tomato(Жёлтые помидоры) conf 0.9 qty 8`, `cucumber(Огурцы) conf 0.9 qty 5`, `uncertainItems: []`. Second attempt succeeded after 1305 overloaded, no schema fallback needed beyond initial `json_object`.
+| Provider | A edits | B edits | C edits       | Total            | FP  | First-attempt success | Retries | Avg latency |
+| -------- | ------- | ------- | ------------- | ---------------- | --- | --------------------- | ------- | ----------- |
+| gemini   | 12      | 9       | 21            | **42**           | 15  | 2/3                   | 1       | 38851ms     |
+| groq     | 0       | 8       | 13            | **21**           | 6   | 3/3                   | 0       | 3066ms      |
+| zai      | 2       | 2       | — (fail 1305) | **4** (2 images) | 0   | 1/3                   | 4       | 22397ms     |
 
-**Human-readable comparison (manual evaluation against ground truth: cucumbers 5, yellow tomatoes 6-8 elongated, red/cherry tomatoes 6-7 small round, cutlets 3 with melted cheese on top, package on right should be omitted):**
+- **Image A (easy, 455f...):** GT: cucumber 4, bell_pepper 1, cherry_tomato 11-13, egg 9-10, cheese 1. Groq **0** (perfect, all 5 correct, qty exact, Russian), ZAI **2** (qty cherry 10 vs 11-13, egg 12 vs 9-10), Gemini **12** (miss bell_pepper/cherry_tomato/cheese, FP red_bell_pepper/cherry_tomatoes/hard_cheese/napa_cabbage, qty egg 8).
+- **Image B (ambiguous, fda...):** GT: zucchini 1, avocado 1, apple 3, lime 2, tomato 4-5. Groq **8** (FP carrot/lettuce, qty zucchini 2 vs 1, apple 4 vs 3, loc avocado/lime English), ZAI **2** (loc avocado/lime English only), Gemini **9** (miss apple, FP green_apple/cucumber/carrot, loc).
+- **Image C (difficult, 0209...):** GT: mushroom 8-12, cauliflower 1, cucumber 2-3, grape 1, chicken 2, pickles 1, carrot 2-3, mustOmit: white/brown paper bags, transparent grain container, jar. Groq **13** (miss chicken/pickles, FP pickle/chicken_breast/tomato/rice, qty mushroom 1 vs 8-12, loc), Gemini **21** (miss mushroom/grape/chicken/pickles, 8 FP incl. champignon_mushrooms/fresh_dill/etc, loc), ZAI **FAIL** `1305 overloaded` after 3 attempts (no result, not scored for accuracy per spec).
 
-| Provider                | Correct                                                                             | False Positive                                                                                                      | Misses                                                                            | User Corrections (add/delete)                                                                                          |
-| ----------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| **Gemini 3.8 Flash**    | — (quota 20/day exceeded, no result)                                                | —                                                                                                                   | —                                                                                 | — (cannot evaluate today)                                                                                              |
-| **Groq Qwen 3.8 27B**   | 3 (cucumber, cherry_tomato, cutlet)                                                 | 1 (yellow_bell_pepper misclassifies yellow_tomato as bell pepper, display English "Yellow Bell Pepper" not Russian) | 2 (yellow_tomato correct type, cheese melted on cutlets not detected as separate) | **Delete** 1 (yellow_bell_pepper), **Add** 2 (yellow_tomato, cheese) = **3 corrections** (qty also off: cutlet 2 vs 3) |
-| **Z.AI GLM-4.6V-Flash** | 4 (cucumber, cherry_tomato, yellow_tomato, cutlet) all with correct Russian display | 0                                                                                                                   | 1 (cheese melted on cutlets not as separate ingredient)                           | **Add** 1 (cheese) = **1 correction** (qty accurate: cutlet 3, cucumber 5)                                             |
+**Reliability (separate):**
 
-**Concrete differences:**
+| Provider | first-attempt | retries | 429    | 5xx | quotaBlocked | avg latency | total wall |
+| -------- | ------------- | ------- | ------ | --- | ------------ | ----------- | ---------- |
+| gemini   | 2/3           | 1       | 0      | 0   | 0            | 38851ms     | 138512ms   |
+| groq     | 3/3           | 0       | 0      | 0   | 0            | 3066ms      | 9200ms     |
+| zai      | 1/3           | 4       | 1×1305 | 0   | 0            | 22397ms     | 67883ms    |
 
-- _yellow tomato →_ Groq **confused with pepper** (`yellow_bell_pepper`, English fallback, not in `CANONICAL_DISPLAY`), ZAI **correctly identified** `yellow_tomato` → `Жёлтые помидоры`.
-- _cheese →_ Both Groq and ZAI **missed** separate cheese (visible as melted on cutlets). Not hallucinated as separate package. ZAI slightly better qty for cheese-related cutlets.
-- _opaque package on right →_ Both **correctly omitted** (no hallucinated hidden contents, `uncertainItems: []` — ideal per rules `prefer omission`).
-- _cutlet →_ ZAI `conf 0.95 qty 3` exact, Groq `conf 0.85 qty 2` slight miss.
-- _cucumber →_ Both correct, ZAI qty 5 exact, Groq 4 close.
-- _cherry vs red tomatoes →_ Both detected `cherry_tomato` (small red), but ground truth has both yellow large and red small — ZAI distinguished yellow vs cherry correctly, Groq conflated yellow large with bell pepper.
+- Gemini: 400 `INVALID_ARGUMENT` then 503 `high demand` on image A (retry succeeded), image B 503 then success, image C success first try.
+- Groq: strict now succeeds, 3/3 first-attempt, lowest latency.
+- ZAI: 2/3 success, 1/3 fail 1305 overloaded after 3 attempts (transient, 2 of those attempts were on image A and C).
 
-**Product metric: HOW MANY USER CORRECTIONS ARE REQUIRED?**
+**Manual review excerpts:**
 
-- Groq: **3** (delete bell pepper, add yellow_tomato, add cheese)
-- ZAI: **1** (add cheese)
-- Gemini: **N/A** today (quota), but previously strong — need quota-free evaluation tomorrow.
+- A/Groq: `DIFF: — EDIT COST 0` (perfect)
+- A/ZAI: `QUANTITY: cherry 10 vs 11-13, egg 12 vs 9-10`
+- B/ZAI: `LOCALIZATION: avocado "Avocado" not Cyrillic` (only error)
+- C/Groq: `MISS: chicken, pickles; FP: pickle, chicken_breast, tomato, rice; QUANTITY: mushroom 1 vs 8-12`
+- C/ZAI: `FAIL 1305` — no accuracy score, reliability fail.
 
-**Rate-limit behavior observed (do not write "unlimited free"):**
+**Cache verification:** Second run with cache enabled → all hits, identical, zero quota, `cacheCheck: PASSED` (key includes provider/model/image SHA-256/promptVersion/schemaVersion).
 
-- Gemini: `429` `RESOURCE_EXHAUSTED` `GenerateRequestsPerDayPerProjectPerModel-FreeTier` `quotaValue 20` (daily free-tier 20, also 5/min). `high demand 503` in earlier logs.
-- ZAI: `429` `code 1305` `The service may be temporarily overloaded, please try again later` — transient, succeeded on retry after 8s. Free model but with `high frequency` / `daily limit` / `overloaded` limits per https://docs.z.ai/api-reference/api-code (1302 rate limit, 1303 high frequency, 1304 daily, 1305 overloaded, 1308 usage limit, 1113 insufficient balance). Observed 2/3 calls overloaded, 1 success.
+**Single-image baseline (previous `tmp/fridge.jpg` 138818 bytes):** Still valid, not reused. Groq 3 corrections (bell_pepper hallucination), ZAI 1 correction (cheese), Gemini quota 20/day blocked. Now superseded by 3-image gauntlet.
 
-**Decision (evidence-based, not automatic):**
+**Decision (evidence-based, not automatic, per spec):**
 
-- Do **NOT** yet make ZAI primary (per spec). Evidence from single image suggests ZAI > Groq for this fridge (correct fine-grained yellow tomato vs bell pepper hallucination, correct Russian display, exact cutlet qty). Recommended next routing after review: `Gemini → ZAI → Groq` (Gemini primary, ZAI second fallback, Groq third) to preserve Gemini quality but reduce Groq misclassification, while keeping Groq as final fallback. Requires second image verification and quota-free Gemini day.
+- **Vision Accuracy Ranking:** 1. zai (4 total, 2.0 mean, 0 FP on 2 images, but 1 image failed), 2. groq (21 total, 7.0 mean, 6 FP), 3. gemini (42 total, 14.0 mean, 15 FP). If counting only completed images, zai clearly best on accuracy per image, but incomplete (2/3).
+- **Reliability Ranking:** 1. groq (3/3, 0 429), 2. gemini (2/3 first-attempt, but 3/3 eventual), 3. zai (1/3 first-attempt, 2/3 eventual, 1 fail 1305).
+- **Recommended Production Routing:** Keep `Gemini → Groq` **unchanged** until ZAI reliability improves (needs 3/3 success). ZAI shows best accuracy when it succeeds (lowest edit cost, zero FP on A/B), but 1305 overload on C makes it not yet fallback #1 per spec (requires ≥2/3 success — it has 2/3, but transient reliability needs bounded retries; currently 1 fail). **Hold** — recommend `Gemini → Groq` primary, keep `ZAI` as benchmark (`?provider=zai`), re-evaluate after ZAI overload stabilizes or with `Gemini → ZAI → Groq` if ZAI achieves 3/3 on retry day.
+- **Zero-Budget Routing:** `ZAI → Groq` attractive (both free), but ZAI 33% fail rate on this gauntlet vs Groq 100% success — for zero-budget, Groq is more reliable despite higher edit cost. **Hold** zero-budget as `Groq → ZAI` or `ZAI → Groq` with retry.
+- **Next:** Do NOT auto-switch routing. This gauntlet used new 3 images, not `tmp/fridge.jpg`. For production change, need explicit separate commit.
 
-### Quality Gates (last run 2026-09-14 after ZAI live benchmark)
+### Previous Single-Image Baseline (for reference, not gauntlet)
+
+**Artifact:** `tmp/live-vision-comparison.json` (138818 bytes, `tmp/fridge.jpg`) — Groq 3 corrections, ZAI 1 correction, Gemini quota 20/day. Now superseded.
+
+### Quality Gates (last run 2026-09-14 after 3-image gauntlet)
 
 ```
 npm run typecheck   ✓
 npm run lint        ✓
-npx prettier --check . ✓
-npm run test        ✓ 78/78 (shared + mock + groq + zai + router + cache)
-npm run build       ✓
-npx playwright test ✓ 12/12 (chromium+mobile, MOCK_MODE=true)
-npm run test:live:vision ✓ tri-provider (gemini 429 quota, groq 4 ingredients best-effort, zai 4 ingredients json_object) artifact saved
+npx prettier --check . ✓ (after --write)
+npm run test        ✓ 78/78 (shared + mock + groq + zai + router + cache + scoring)
+npm run build       ✓ (vite 240KB)
+npx playwright test ✓ 12/12 (chromium+mobile, MOCK_MODE=true, reuseExistingServer handled)
+npm run test:live:vision-gauntlet ✓ 3 images × 3 providers, rotation, strict fixed, cache verified, artifacts saved
 ```
 
-Live commands isolated, zero quota on second same-image run (cached:true).
+Live commands isolated, zero quota on second same-image cached rerun.
 
 ### Known Notes
 
-- ZAI is benchmark only this pass; production routing remains Gemini→Groq, recipes Groq→Gemini until second image.
-- ZAI vision fallback not in production chain; benchmark harness reports limits explicitly (1305) rather than silently replacing.
-- ZAI image limit 5M (vs 8MB app) — app limit safe; Groq strict 400 due to optional `quantityGuess`/`reason` not in `required` → best-effort fallback documented.
+- Production routing remains Gemini→Groq, recipes Groq→Gemini — ZAI is benchmark only until gauntlet decision. Gauntlet shows ZAI best accuracy (4 vs 21) but 1/3 fail 1305, so hold.
+- ZAI image limit 5M (vs 8MB app) — app limit safe; Groq strict now fixed (quantityGuess/reason required) → strict:true succeeds.
+- Phone photo compress script: `scripts/compress-fridge-photo.ts` (sharp, 6000x6000, 5M, mozjpeg 80, resize to 1920) — `npm run compress:photo input.jpg [output.jpg]` and `npm run compress:photo -- --gauntlet` for 3 images.
 - Tiny 1x1 png still rejected; e2e uses 6KB dummy.
-- Playwright reuses system Chrome, workers 2.
-- Do not commit `.env.local` or `tmp/*.jpg` (fridge photo).
+- Playwright reuses system Chrome, workers 2; kill node before run if LIVE server running.
+- Do not commit `.env.local`, `tmp/*.jpg`, `tmp/vision-gauntlet/*.jpg` (but `ground-truth.json` is human-reviewed, keep in repo? Currently in tmp, not committed per spec — if needed, move to `tmp/vision-gauntlet/input` is gitignored via `tmp`).
+- 5 PNGs in `tmp` (1.9-2MB 1086x1448) → 3 JPGs in `tmp/vision-gauntlet/input` (130-148KB) for gauntlet; hero.png / fridge.jpg NOT used.
 
 ### For Next Agent
 
-- Do not rewrite git history, do not commit secrets or `tmp/fridge.jpg`
+- Do not rewrite git history, do not commit secrets or `tmp/fridge.jpg` or `tmp/vision-gauntlet/input/*.jpg` (tmp is gitignored)
 - Keep model IDs unchanged: `gemini-3.8-flash`, `qwen/qwen3.8-27b`, `glm-4.6v-flash`
-- See DECISIONS.md ADRs 022+ for ZAI, cache, health, live results
-- See FAILURES.md for ZAI 1305, Groq strict schema, Playwright reuse, ByteString
-- If changing production routing, update `server/providers/router.ts` Vision chain to `Gemini → ZAI → Groq` only after second image evidence
+- See DECISIONS.md ADRs 022-025 for ZAI, cache, health, live results, gauntlet decision
+- See FAILURES.md F-019..F-021 for Groq strict, ZAI 1305, Gemini daily quota
+- If changing production routing, update `server/providers/router.ts` Vision chain to `Gemini → ZAI → Groq` only after explicit decision commit — current is HOLD per gauntlet (ZAI 2/3 success, need 3/3)

@@ -4,7 +4,11 @@ import { scoreOne } from "./scoring.js";
 function gt(items: Array<{ canonicalId: string; min: number; max: number; required?: boolean }>) {
   return {
     id: "test",
-    items: items.map((i) => ({ canonicalId: i.canonicalId, quantity: { min: i.min, max: i.max }, required: i.required ?? true })),
+    items: items.map((i) => ({
+      canonicalId: i.canonicalId,
+      quantity: { min: i.min, max: i.max },
+      required: i.required ?? true,
+    })),
   };
 }
 
@@ -119,7 +123,15 @@ describe("scoring rubric", () => {
   it("Groq strict schema validates locally", async () => {
     const { fridgeAnalysisSchema } = await import("./schemas.js");
     const valid = {
-      ingredients: [{ canonicalName: "tomato", displayName: "Помидоры", confidence: 0.9, visibility: "clear", quantityGuess: 3 }],
+      ingredients: [
+        {
+          canonicalName: "tomato",
+          displayName: "Помидоры",
+          confidence: 0.9,
+          visibility: "clear",
+          quantityGuess: 3,
+        },
+      ],
       uncertainItems: [{ canonicalName: "yogurt", displayName: "Йогурт", reason: "test" }],
     };
     expect(() => fridgeAnalysisSchema.parse(valid)).not.toThrow();

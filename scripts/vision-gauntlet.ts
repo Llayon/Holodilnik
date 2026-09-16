@@ -280,7 +280,7 @@ async function runProviderOnce(
   }
 
   let lastError: string | undefined;
-  let retryDelays: number[] = [];
+  const retryDelays: number[] = [];
   let attemptCount = 0;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     attemptCount = attempt;

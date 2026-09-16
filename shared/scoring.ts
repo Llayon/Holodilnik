@@ -71,17 +71,25 @@ export function scoreOne(
       detail.correct++;
       const qty = found.quantityGuess;
       if (qty !== null && (qty < gt.quantity.min || qty > gt.quantity.max)) {
-        detail.quantityErrors.push({ canonicalId: gt.canonicalId, expected: `${gt.quantity.min}-${gt.quantity.max}`, got: qty });
+        detail.quantityErrors.push({
+          canonicalId: gt.canonicalId,
+          expected: `${gt.quantity.min}-${gt.quantity.max}`,
+          got: qty,
+        });
         detail.totalEditCost += 1;
       }
       if (!isCyrillic(found.displayName) || found.displayName.includes("_")) {
-        detail.localizationErrors.push({ canonicalId: gt.canonicalId, displayName: found.displayName });
+        detail.localizationErrors.push({
+          canonicalId: gt.canonicalId,
+          displayName: found.displayName,
+        });
         detail.totalEditCost += 1;
       }
     } else {
       // Check for wrong fine-grained class (e.g., yellow_tomato vs yellow_bell_pepper)
       let wrongFound: string | undefined;
-      if (gt.canonicalId === "yellow_tomato" && returnedIds.has("yellow_bell_pepper")) wrongFound = "yellow_bell_pepper";
+      if (gt.canonicalId === "yellow_tomato" && returnedIds.has("yellow_bell_pepper"))
+        wrongFound = "yellow_bell_pepper";
       if (wrongFound) {
         detail.wrongClass.push({ expected: gt.canonicalId, got: wrongFound });
         detail.totalEditCost += 1;

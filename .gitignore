@@ -43,3 +43,6 @@ playwright/.cache
 # Build
 .vite
 tmp
+
+.vercel
+.env*

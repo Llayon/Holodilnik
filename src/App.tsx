@@ -11,8 +11,10 @@ import type { FridgeAnalysisResult, Recipe } from "../shared/types";
 import { SLOT_LABELS } from "../shared/types";
 import { normalizeIngredient } from "../shared/normalization";
 import { SUGGESTIBLE_INGREDIENTS } from "../shared/normalization";
+import { compressImage } from "./lib/imageCompression";
 
-type Step = "landing" | "photo" | "analyzing" | "ingredients" | "recommendations" | "recipe";
+type Step =
+  "landing" | "preparing" | "photo" | "analyzing" | "ingredients" | "recommendations" | "recipe";
 
 export default function App() {
   const [step, setStep] = useState<Step>("landing");
@@ -61,28 +63,43 @@ export default function App() {
       .catch(() => setProviderMode("unknown"));
   }, []);
 
-  const handleFile = (file: File) => {
+  const handleFile = async (file: File) => {
     setError(null);
-    if (!file.type.startsWith("image/")) {
+    // Accept image/* plus HEIC by extension (iPhone may report type empty)
+    const lowerName = file.name.toLowerCase();
+    const isHeicByExt = lowerName.endsWith(".heic") || lowerName.endsWith(".heif");
+    if (!file.type.startsWith("image/") && !isHeicByExt) {
       setError("Пожалуйста, выберите изображение");
       return;
     }
-    if (file.size > 8 * 1024 * 1024) {
-      setError("Фото слишком большое (максимум 8 МБ). Попробуйте другое.");
-      return;
+
+    // Release previous object URL if any (when using blob URLs)
+    if (imagePreviewUrl && imagePreviewUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(imagePreviewUrl);
     }
 
-    setImageMime(file.type || "image/jpeg");
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      // result is data URL
-      const base64 = result.includes(",") ? result.split(",")[1] : result;
-      setImageBase64(base64);
-      setImagePreviewUrl(result);
+    setStep("preparing");
+
+    try {
+      const result = await compressImage(file);
+      // Preview uses the normalized image that is actually sent to the model
+      // (re-encoded JPEG, EXIF stripped). Do not retain original 10MB bytes.
+      setImageBase64(result.base64);
+      setImageMime(result.mimeType);
+      setImagePreviewUrl(result.dataUrl);
       setStep("photo");
-    };
-    reader.readAsDataURL(file);
+      // Dev logging is inside compressImage; nothing to log here besides sanitized meta if needed
+      if ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV) {
+        console.log(
+          `[photo] compressed ${result.metadata.originalBytes} → ${result.metadata.compressedBytes} bytes ${result.metadata.originalWidth}x${result.metadata.originalHeight} → ${result.metadata.outputWidth}x${result.metadata.outputHeight}`,
+        );
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // HEIC or compression failures are recoverable with clear guidance
+      setError(msg);
+      setStep("landing");
+    }
   };
 
   const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -179,6 +196,9 @@ export default function App() {
   };
 
   const resetToLanding = () => {
+    if (imagePreviewUrl && imagePreviewUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(imagePreviewUrl);
+    }
     setStep("landing");
     setImageBase64(null);
     setImagePreviewUrl(null);
@@ -189,6 +209,15 @@ export default function App() {
     setSelectedRecipe(null);
     setError(null);
   };
+
+  // Release blob preview URLs when replaced/unmounted
+  useEffect(() => {
+    return () => {
+      if (imagePreviewUrl && imagePreviewUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(imagePreviewUrl);
+      }
+    };
+  }, [imagePreviewUrl]);
 
   // Dev-only provider routing diagnostics (not user-facing infrastructure)
   const isDev = (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV;
@@ -286,6 +315,21 @@ export default function App() {
                 Загрузить фото
               </button>
               <div className="helper">Работает на телефоне и на компьютере</div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "var(--muted)",
+                  textAlign: "center",
+                  lineHeight: 1.4,
+                  padding: "0 8px",
+                }}
+                data-testid="privacy-note"
+              >
+                Фото используется для распознавания продуктов и не сохраняется в нашем хранилище.
+                <br />
+                Для анализа фото временно передаётся сервису распознавания. Мы не сохраняем само
+                изображение после обработки.
+              </div>
             </div>
 
             {/* hidden inputs */}
@@ -306,6 +350,14 @@ export default function App() {
               onChange={onPickFile}
               data-testid="input-upload"
             />
+          </section>
+        )}
+
+        {step === "preparing" && (
+          <section className="analyzing" data-testid="preparing">
+            <div className="spinner" aria-hidden="true" />
+            <h2>Подготавливаю фото…</h2>
+            <p>Сжимаю и обрабатываю изображение на устройстве</p>
           </section>
         )}
 
@@ -343,6 +395,18 @@ export default function App() {
             <button className="btn btn-primary" onClick={triggerAnalyze} data-testid="analyze-btn">
               Смотрю, что у тебя есть…
             </button>
+
+            <div
+              style={{
+                fontSize: 11,
+                color: "var(--muted)",
+                textAlign: "center",
+                lineHeight: 1.4,
+                marginTop: -4,
+              }}
+            >
+              Фото используется для распознавания и не сохраняется после обработки.
+            </div>
 
             <input
               ref={fileInputRef}

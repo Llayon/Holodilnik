@@ -2,19 +2,36 @@ import { test, expect } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 
-// tiny 1x1 png base64
-const TINY_PNG_BASE64 =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+// Valid small JPEG for e2e — must be decodable by browser canvas (after client compression)
+// and >500 bytes to pass server's tiny-image guard. Using sharp if available.
 
-function createTempImage(filename = "fridge-test.png"): string {
+async function createTempImage(filename = "fridge-test.png"): Promise<string> {
   const filePath = path.join(process.cwd(), filename);
-  // Create a ~6KB dummy image (valid enough for mock, passes >500 bytes check)
-  // Use random bytes so base64 is valid and large
-  const buf = Buffer.alloc(6000, 0);
-  // Sprinkle some png header to look like image (optional)
-  Buffer.from(TINY_PNG_BASE64, "base64").copy(buf, 0);
-  fs.writeFileSync(filePath, buf);
-  return filePath;
+  try {
+    const { default: sharp } = await import("sharp");
+    // Create a realistic 800×600 fridge-like JPEG (~8-15KB, valid, decodable)
+    const svg = `<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="#f5f5f0"/><rect x="40" y="40" width="720" height="160" rx="12" fill="#ff3b30"/><rect x="60" y="240" width="340" height="140" rx="8" fill="#34c759"/><rect x="430" y="240" width="310" height="140" rx="8" fill="#ffcc02"/><text x="120" y="130" font-size="24" fill="white" font-family="sans-serif">Test fridge</text></svg>`;
+    await sharp({
+      create: { width: 800, height: 600, channels: 3, background: { r: 255, g: 255, b: 255 } },
+    })
+      .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
+      .jpeg({ quality: 80, mozjpeg: true })
+      .toFile(filePath);
+    return filePath;
+  } catch {
+    // Fallback: tiny 1x1 png padded to >500 bytes but still decodable?
+    // Create 6KB buffer with valid 1x1 PNG header + readable tail (browser may still decode header)
+    const TINY_PNG_BASE64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+    const base = Buffer.from(TINY_PNG_BASE64, "base64");
+    // Instead of random bytes, repeat base to keep PNG chunks valid-ish? Use sharp fallback if needed.
+    // Write at least 600 bytes OF valid PNG — use base as is and rely on server mock (will still need decode)
+    // For fallback, just write base (67 bytes) - e2e will handle compression failure by fallback? Better ensure >500 via valid large PNG.
+    // As last resort, write base repeated 10 times — browser will decode first PNG and ignore trailing? Most decoders ignore trailing.
+    const buf = Buffer.concat(Array.from({ length: 10 }, () => base));
+    fs.writeFileSync(filePath, buf);
+    return filePath;
+  }
 }
 
 test.describe("Holodilnik vertical slice (MOCK)", () => {
@@ -31,14 +48,15 @@ test.describe("Holodilnik vertical slice (MOCK)", () => {
   });
 
   test("full flow: upload -> analyze -> ingredients -> 3 recipes -> detail", async ({ page }) => {
-    const imgPath = createTempImage("test-fridge.png");
+    const imgPath = await createTempImage("test-fridge.png");
 
     // upload via secondary input
     const fileInput = page.getByTestId("input-upload");
     await fileInput.setInputFiles(imgPath);
 
-    // should go to photo step
-    await expect(page.getByTestId("photo-step")).toBeVisible();
+    // compression is client-side (brief "Подготавливаю фото…" then photo)
+    // wait for photo step (allow preparing intermediate)
+    await expect(page.getByTestId("photo-step")).toBeVisible({ timeout: 8000 });
     await expect(page.getByTestId("analyze-btn")).toBeVisible();
 
     // trigger analyze
@@ -103,8 +121,9 @@ test.describe("Holodilnik vertical slice (MOCK)", () => {
   });
 
   test("ingredient addition via suggest and custom input works", async ({ page }) => {
-    const imgPath = createTempImage("test-fridge2.png");
+    const imgPath = await createTempImage("test-fridge2.png");
     await page.getByTestId("input-upload").setInputFiles(imgPath);
+    await expect(page.getByTestId("photo-step")).toBeVisible({ timeout: 8000 });
     await page.getByTestId("analyze-btn").click();
     await expect(page.getByTestId("ingredients-step")).toBeVisible({ timeout: 10000 });
 
@@ -133,8 +152,9 @@ test.describe("Holodilnik vertical slice (MOCK)", () => {
       });
     });
 
-    const imgPath = createTempImage("test-fridge3.png");
+    const imgPath = await createTempImage("test-fridge3.png");
     await page.getByTestId("input-upload").setInputFiles(imgPath);
+    await expect(page.getByTestId("photo-step")).toBeVisible({ timeout: 8000 });
     await page.getByTestId("analyze-btn").click();
 
     // should return to photo step with error

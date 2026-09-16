@@ -49,7 +49,8 @@ app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
 // Health — safe status, no secrets / key prefixes / infra detail leak.
 // In production, hide detailed vision/recipes breakdown to anonymous visitors.
-app.get("/api/health", (_req, res) => {
+// Handler shared for both /api/health and /health (Vercel api/index strips /api prefix via rewrite).
+function handleHealth(_req: express.Request, res: express.Response) {
   const mockMode = isMockMode();
   const geminiAvail = isGeminiAvailable();
   const groqAvail = isGroqAvailable();
@@ -104,7 +105,9 @@ app.get("/api/health", (_req, res) => {
     benchmarkProviders: ["gemini", "groq", "zai"],
     cache: getCacheStats(),
   });
-});
+}
+app.get("/api/health", handleHealth);
+app.get("/health", handleHealth);
 
 // Dev-only cache reset. Must not be available in production.
 const requireDev = (_req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -114,18 +117,20 @@ const requireDev = (_req: express.Request, res: express.Response, next: express.
   next();
 };
 
-app.delete("/api/cache", requireDev, (_req, res) => {
+function handleCacheClear(_req: express.Request, res: express.Response) {
   clearAllCaches();
   res.json({ status: "cleared", cache: getCacheStats() });
-});
-app.post("/api/cache/clear", requireDev, (_req, res) => {
-  clearAllCaches();
-  res.json({ status: "cleared", cache: getCacheStats() });
-});
+}
+app.delete("/api/cache", requireDev, handleCacheClear);
+app.delete("/cache", requireDev, handleCacheClear);
+app.post("/api/cache/clear", requireDev, handleCacheClear);
+app.post("/cache/clear", requireDev, handleCacheClear);
 
-// Routes
+// Routes — mount at both /api/* and /* for Vercel api/index stripped prefix compatibility.
 app.use("/api/fridge", fridgeRouter);
+app.use("/fridge", fridgeRouter);
 app.use("/api/recommendations", recommendationsRouter);
+app.use("/recommendations", recommendationsRouter);
 
 // Serve frontend in production (local `npm run build` + `node dist`).
 // On Vercel, express.static is ignored — static is served from `dist` via

@@ -123,9 +123,42 @@
 - **Cause:** Free-tier daily limit 20 (also 5/min) hit by earlier manual/UI tests.
 - **Fix:** Documented as expected; Groq/ZAI fallback still works for production (Groq primary for recipes, Groq fallback for vision). Next benchmark should be on new day or with quota reset; do not claim global accuracy from one image where Gemini unavailable.
 
+## F-022: Client compression dummy image invalid decode
+
+- **Symptom:** After adding `src/lib/imageCompression.ts` canvas pipeline, e2e `full flow` failed: `expect(photo-step).toBeVisible` timeout, then `expect(landing)` with error banner. Browser console: `createImageBitmap` / `Image` failed to decode dummy 6KB buffer (random bytes with png header, not valid image).
+- **Cause:** Previous `createTempImage` wrote `Buffer.alloc(6000)` with png header + zeros — not decodable by browser decoder. Old `handleFile` just read base64 without decode, so passed. New pipeline requires real decode + correct orientation + re-encode.
+- **Fix:** Updated `e2e/app.spec.ts` `createTempImage` to use `sharp` to generate valid 800×600 JPEG (SVG fridge overlay, mozjpeg 80, ~8-15KB, decodable) when sharp available, fallback to repeated 1×1 PNG (browser ignores trailing). Also updated `handleFile` to handle `preparing` step before `photo`. Now 12/12 pass with compression.
+
+## F-023: Vercel api/health 404 after first deploy
+
+- **Symptom:** First production deploy `https://holodilnik-seven.vercel.app/api/health` returned `404 NOT_FOUND` (Vercel `fra1::...`), while `GET /` succeeded (static). Function `λ api/index (1.62MB)` existed but `/api/health` not routed.
+- **Cause:** Project has `api/index.ts` (Express) + Vite `dist`. Without `vercel.json` rewrites, request `/api/health` looks for file `api/health.ts` not `api/index.ts`. `vercel.json` had only `buildCommand`/`outputDirectory`, no rewrites, so `/api/*` not funneled to single `api/index` function. Also `server.ts` not built because framework detection for Vite overrode Express zero-config.
+- **Fix:** Added `vercel.json` rewrites `[{source:"/api/(.*)", destination:"/api"}]` to funnel all api to single function, added dual mounts in `server/app.ts` (`/api/health` + `/health`, `/api/fridge` + `/fridge`, etc.) for stripped prefix compatibility, added `process.env.VERCEL` conditional to skip `express.static` in prod function. Redeployed preview → production, health now 200 prod minimal, 413/404 policies verified.
+
+## F-024: Vercel link project name case sensitivity
+
+- **Symptom:** `npx vercel link --yes` failed: `Project names ... must be lowercase. They can include letters, digits, and following characters: '.', '_', '-'. However, they cannot contain the sequence '---'. (400)` for directory `Holodilnik` (capital H).
+- **Cause:** Vercel auto-detects project name from directory name, which was `Holodilnik` with capital H.
+- **Fix:** Created project explicitly via `vercel project add holodilnik` (lowercase), then `vercel link --yes --project holodilnik` succeeded. Added `.vercel` to `.gitignore`.
+
+## F-025: Vercel env .env.local overwritten with OIDC token
+
+- **Symptom:** After `vercel link`, `.env.local` lost `PORT=3001` and gained `VERCEL_OIDC_TOKEN=...` (development OIDC), but kept `GEMINI/GROQ/ZAI` keys. `npm run dev` would default port incorrectly.
+- **Cause:** `vercel pull` behavior merges project env; linked project had no env yet, but CLI added token and overwrote file without preserving `PORT`.
+- **Fix:** Restored `PORT=3001` manually, kept `VERCEL_OIDC_TOKEN` (harmless, gitignored). Then set real env vars via `vercel env add GEMINI_API_KEY/GROQ_API_KEY/ZAI_API_KEY` for Production/Preview/Development (sensitive, hidden).
+
+## F-026: Image quality regression with high-frequency noise synthetic
+
+- **Symptom:** `server/imageQualityRegression.test.ts` with naive `Buffer.alloc` noise (per-pixel `sin` xor) produced 6000×4000 JPEG 717KB at 1440 q84, failing `expect(... ≤300KB)` and timing out 15s for 6000×4000 generation.
+- **Cause:** High-frequency random noise is worst-case for JPEG (incompressible), not representative of real fridge photos (which compress to 130–150KB at 1086×1448 q80). Synthetic with noise bloats.
+- **Fix:** Replaced synthetic with SVG fridge overlay (rectangles + text) via `sharp` SVG composite — realistic compressible content, same dimensions → 4000×3000 now 701ms, all 5 tests pass (1086×1448 ≤200KB, 800×600 not upscaled, metadata stripped).
+
 ## Next Watch
 
 - If live Gemini returns `NO_FOOD_DETECTED` too often, tune vision prompt confidence threshold or add `mediaResolution` param.
 - If recipe generation fails slot validation (duplicate slots), add retry or repair step.
 - Groq/ZAI vision may occasionally return English displayName; normalization re-maps to Russian but monitor for new unknown canonicals → add alias/display.
 - Z.AI free tier limits (1302/1305 etc) — harness reports explicitly, consider exponential backoff if overload persists.
+- Vercel Hobby production is public (password requires Pro 428) — for closed test, use Preview SSO (`ssoProtection all_except_custom_domains`) or upgrade plan/dashboard password; do not expose uncontrolled AI endpoint publicly.
+- HEIC: Chrome/Firefox cannot decode HEIC → shown guidance, but iPhone default is HEIC; Safari works. Monitor real iPhone photo success rate.
+- Large function 1.62MB OK (<250MB), but if dependencies grow, enable `VERCEL_SUPPORT_LARGE_FUNCTIONS` or trim.

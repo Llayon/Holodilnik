@@ -149,3 +149,45 @@
 - **Decision:** Keep production vision routing `Gemini → Groq` unchanged in this pass despite single-image evidence that ZAI (`glm-4.6v-flash`) outperformed Groq (`qwen/qwen3.8-27b`) on the same fridge (ZAI 4/4 correct fine-grained, 1 correction for cheese; Groq 3/4 correct, 1 false positive `yellow_bell_pepper` misclassifying yellow tomato, English display fallback, 3 corrections). Gemini was not comparable due to daily 20 quota `RESOURCE_EXHAUSTED`.
 - **Context:** Single-image benchmark on `tmp/fridge.jpg` (138818 bytes, cucumbers, yellow tomatoes, red/cherry tomatoes, cutlets with melted cheese, package on right) via `npm run test:live:vision` (cache-aware). Groq strict schema 400 (`quantityGuess`/`reason` not in `required`) fell back to best-effort; ZAI 1305 overloaded transient but succeeded on retry. Ground truth not hardcoded into prompts, only for manual evaluation. Next routing `Gemini → ZAI → Groq` suggested but requires second image + quota-free Gemini day.
 - **Consequence:** No automatic routing change; `VisionProviderChain` remains Gemini→Groq; ZAI remains `benchmarkProviders` and `?provider=zai` dev endpoint. Live artifact `tmp/live-vision-comparison.json` saved without keys for evidence. Do not claim global accuracy from one image.
+
+## ADR-026: Vercel server entrypoint (server/app.ts, server.ts, api/index.ts)
+
+- **Decision:** Refactor Express app into `server/app.ts` (exports `app` without listening), `server/index.ts` (local `app.listen`), `server.ts` (root `export default app` for Vercel zero-config Express) + `api/index.ts` (Vercel `api` folder function) sharing same `app`. `vercel.json` with `buildCommand: npm run build`, `outputDirectory: dist`, `rewrites: [{source:"/api/(.*)", destination:"/api"}]` to funnel api to single function. Framework Vite. `tsconfig.node.json` includes `server.ts` + `api`.
+- **Context:** Verified 2026-09-16 Vercel docs https://vercel.com/docs/frameworks/backend/express — zero-config expects `app.ts|index.ts|server.ts` at root or `src/` exporting `app` or listening; `api/index.ts` also built as `λ api/index (1.62MB)`. `express.static` ignored on Vercel, static served from `dist` via CDN. Build 20-38s in `iad1`, function <250MB limit. `PORT` from runtime, `vercel dev` for local parity (CLI 47+).
+- **Consequence:** `npm run dev` still works (concurrently Vite 5173 + Express 3001 via Vite proxy), `npm run build` still works (`tsc -b && vite build` 246KB), Vercel serves frontend and `/api/*` same origin, no separate backend URL, no localhost:3001 in prod.
+
+## ADR-027: Client-side image normalization (200KB target, 300KB hard)
+
+- **Decision:** Implement `src/lib/imageCompression.ts` browser pipeline: decode via `createImageBitmap` with `imageOrientation:"from-image"` (fallback `<img>`), never upscale small images, resize long edge initially 1440 (spec 1200–1600), JPEG encode `image/jpeg` (widest compat), quality 0.84→0.55 bounded, fallback dimensions 1280/1024/800/640, stop ≤200KB where practical, allow ≤300KB rather than blurry, never intentional >300KB, bounded iterations, strip EXIF/GPS by re-encode, return `{base64,mimeType,blob,dataUrl,metadata:{originalBytes,compressedBytes,originalWidth,originalHeight,outputWidth,outputHeight,mimeType}}` with dev-only size logging (never base64).
+- **Context:** Real gauntlet demonstrated 1086×1448 JPEG 130–150KB retains labels/vegetables/occluded products. Vercel Functions limit 4.5MB, our 300KB decoded → ~400KB base64 + JSON well below. Base64 transport kept simple, no multipart. Verification via `server/imageQualityRegression.test.ts` with sharp SVG synthetic (4000×3000 etc.) shows 1440 q84 ≤200KB realistic, metadata stripped.
+- **Consequence:** Production uploads reliably ≤200KB (≤300KB hard), preserves detail, reduces AI cost/latency, avoids server recompression (server limit is safety).
+
+## ADR-028: Photo privacy / no persistence
+
+- **Decision:** Guarantee "not persisted by our application": image bytes exist only transiently in request memory → AI provider → structured JSON → request completes. Never save to filesystem/`/tmp`/Blob/DB/Supabase/Redis/logs/cache/GitHub/error reports. Cache stores only `SHA-256(image bytes)+provider/model/promptVersion → result`, never base64/dataURL/path. Add tests proving cache values contain no image bytes and regression.
+- **Context:** Spec §6-7 critical requirement; need user-facing copy near upload: "Фото используется для распознавания продуктов и не сохраняется в нашем хранилище. Для анализа фото временно передаётся сервису распознавания. Мы не сохраняем само изображение после обработки." Not claim "never leaves device" (it is sent to AI provider).
+- **Consequence:** Privacy text in landing CTA and photo preview; server route never logs image; cache never stores image.
+
+## ADR-029: Server image limit 300KB decoded
+
+- **Decision:** Reduce `config.maxImageBytes` from 8MB to `300*1024` (300KB decoded). Measure via `Buffer.from(base64,'base64').length` (not string length). Return 413 `IMAGE_TOO_LARGE` with Russian message. Express `json` limit 2mb (allows 400KB base64). No server-side recompression for normal requests (client does).
+- **Context:** After client compression, 8MB limit unnecessary; tighten to enforce policy and protect Vercel 4.5MB limit. 413 mapping humanized in `src/lib/api.ts`.
+- **Consequence:** Oversized (400KB dummy) correctly 413, valid 150KB passes (mock or live).
+
+## ADR-030: Production security cleanup (cache/provider, health, CORS)
+
+- **Decision:** Disable `DELETE /api/cache` + `POST /api/cache/clear` in production via `requireDev` (404), disable `?provider=` override in production (404), make `GET /api/health` minimal in production (only `{status,mockMode,provider,modelId}`) vs full diagnostics in dev, implement environment-aware CORS: production same-origin (no middleware), dev allow `localhost:5173`/`127.0.0.1:5173` per-request (so tests can toggle `NODE_ENV`). Also mount `"/health"` alias and `"/fridge"` etc. for Vercel stripped prefix compatibility. Add `process.env.VERCEL` conditional for static (no `express.static` in prod function).
+- **Context:** Spec §11-12: production must not expose destructive dev actions or infrastructure detail, never expose keys/prefixes, same-origin prod, `localhost` dev. Verified via `server/productionImagePolicy.test.ts` (17 tests: 413, 200, cache no bytes, 404 prod cache, 404 prod provider, 200 dev provider mock, health minimal vs dev full, CORS no wildcard prod vs allow localhost dev).
+- **Consequence:** Production endpoints not enumerable, no secret leak, CORS not permissive.
+
+## ADR-031: Frontend UX during compression
+
+- **Decision:** Add `Step` type `"preparing"` between `landing` and `photo` with spinner and text "Подготавливаю фото…" (brief local processing), then preview normalized image that is actually sent to model, then "Смотрю, что у тебя есть…" for analyzing. Avoid double loaders, no technical `q=0.76` shown. Release `blob:` URLs via `URL.revokeObjectURL` on replace/unmount, do not retain original 10MB and compressed in state longer than necessary.
+- **Context:** Spec §16-17: compression should feel invisible, use simple state if noticeable, preview helps reproduce vision issues, avoid memory retention.
+- **Consequence:** `src/App.tsx` updated: `handleFile` is async `compressImage`, sets `preparing` → `photo`, stores `base64`+`dataUrl`, logs sanitized metadata in dev, shows privacy helper text. E2E helper updated to generate valid 800×600 JPEG via `sharp` (was 6KB dummy with invalid image that would fail decode).
+
+## ADR-032: Vercel deployment & image quality regression tests
+
+- **Decision:** Add `server/imageQualityRegression.test.ts` (5 tests, Node sharp synthetic SVG fridge, 1440 q84 → ≤200KB realistic, not high-frequency noise) and extend `src/lib/imageCompression.test.ts` (helpers, calculateSize, HEIC, bounded Qualities) and `server/productionImagePolicy.test.ts` (17 tests). Total 128 unit tests (was 78) + 12 e2e all green. E2E now uses valid JPEG and waits for `photo-step` with timeout handling preparing. `vercel.json` + `vercel project add` + `vercel env add` for `GEMINI/GROQ/ZAI` (sensitive, all envs) + deployment protection check (Preview SSO protected, Production public on Hobby — password requires Pro 428).
+- **Context:** Spec §18-19 requires deterministic tests for all policy points without live AI calls; quality regression demonstrates 130–150KB target realistic.
+- **Consequence:** Gates `format:check`, `lint`, `typecheck`, `test`, `build`, `test:e2e` all pass; deployment `holodilnik-seven.vercel.app` verified live (health 200, cache 404, provider 404, 130KB image → 200, 400KB → 413, CORS null, no secret in bundle).

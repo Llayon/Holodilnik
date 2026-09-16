@@ -1,70 +1,107 @@
 # STATE.md — Holodilnik Checkpoint
 
-## Current Checkpoint: VISION ROUTING GAUNTLET — 3 IMAGES, DECISION READY (ZAI 4 vs Groq 21 vs Gemini 42)
+## Current Checkpoint: VERCEL PRODUCTION READINESS + EPHEMERAL IMAGE PASS — DEPLOYED
 
-**Date:** 2026-09-14
-**Branch / Commit:** master at 1a1bb11 -> vision gauntlet harness + Groq strict fix (see git log + tmp/vision-gauntlet/REPORT.md)
-**HEAD before pass:** f77ca76 fix: handle invalid GROQ_API_KEY placeholder (ByteString) and improve config validation
-**Gauntlet images:** `tmp/vision-gauntlet/input/image-a.jpg` (130050 bytes, bdf58a..., 1086x1448), `image-b.jpg` (131100 bytes, cec0d7..., 1086x1448), `image-c.jpg` (148219 bytes, 27fd92..., 1086x1448) — 5 PNGs in `tmp` compressed via `scripts/compress-fridge-photo.ts --gauntlet` (>6000x6000 → 1920, JPG 80, SHA-256 recorded)
-**Baseline image (not gauntlet):** `tmp/fridge.jpg` (138818 bytes, 712f4e..., 960x1280 — cucumbers 5, yellow tomatoes 6-8, red/cherry 6-7, cutlets 3, package on right) — previous single-image benchmark, now superseded by 3-image gauntlet
+**Date:** 2026-09-16
+**Branch / Commit:** master at 4a0e52a -> vercel rewrites + ephemeral image policy (see git log)
+**Starting HEAD before pass:** bfe1d019dbff792c2387ea40050b8f89c589c692 (vision gauntlet scoring rubric)
+**Ending HEAD:** 4a0e52ad1328843baadeb4de059cfc69bc2deca3 (fix: route api via vercel rewrites)
+**Commits created in this pass:**
 
-### What Works End-to-End (mock, no key required)
+- 7547f34 chore: prepare express app for vercel deployment
+- 11e7ea4 feat: compress fridge photos before upload
+- c4811e0 fix: enforce 300kb production image limit
+- 0e0ad73 test: cover production image privacy and limits
+- 4a0e52a fix: route api via vercel rewrites and handle stripped prefix
+  **Git status:** clean, ahead of origin/master 0 after push
+  **Deployment URL:** https://holodilnik-seven.vercel.app (production, also https://holodilnik-by7sspu6k-maximocappuccino-gmailcoms-projects.vercel.app)
+  **Deployment protection:** Preview deployments require Vercel SSO (ssoProtection all_except_custom_domains); Production is public on Hobby plan (Password Protection requires Pro per `vercel project protection` 428). For closed test, share Preview URL or use Vercel Authentication bypass; proper user auth will be next phase.
 
-- Landing → Photo (camera + upload, preview+replace) → Analyzing → Ingredients → Recommendations (exactly 3) → Recipe Detail (same as before)
-- Mock flow deterministic: eggs/tomatoes/cheese/chicken/zucchini/sour cream + uncertain yogurt/greens; recipes 3 slots
-- Ingredient normalization: fixed for Yellow tomato / Cherry_tomato / Cutlet etc., plus ZAI unknown labels (humanized fallback, never snake_case)
-- Pantry staples unchanged: salt, black_pepper, vegetable_oil only
-- Recommendations validation unchanged: pantry-aware, never `Всё есть` when missing, 3 distinct slots
-- Security: `GEMINI_API_KEY`, `GROQ_API_KEY`, `ZAI_API_KEY` server-only, no `VITE_` variant, `.env.example` contains all three empty, `.env.local` gitignored
-- Tests: 78 unit (shared + mock + groq + zai + router + cache) + 12 e2e (chromium+mobile) — all green without live keys
+### What Works End-to-End (production, live keys)
+
+- Landing → Photo (camera + upload) → Preparing ("Подготавливаю фото…") → Photo preview (normalized) → Analyzing ("Смотрю, что у тебя есть…") → Ingredients → Recommendations (exactly 3) → Recipe Detail
+- Client compression: all photos normalized BEFORE upload via `src/lib/imageCompression.ts` (canvas, createImageBitmap with `imageOrientation:"from-image"`, EXIF stripped by re-encode, long edge 1440 initial, JPEG quality 0.84→0.55 bounded, fallback dimensions 1280/1024/800/640, target ≤200KB, hard ≤300KB, never intentional >300KB). Preview uses normalized dataUrl that is actually sent.
+- Server limit: `config.maxImageBytes = 300*1024`, measured via `Buffer.from(base64,'base64').length` (decoded bytes, not string length). Oversized → 413 `IMAGE_TOO_LARGE` with Russian message. Express json limit 2mb (base64 inflation ~33% keeps 300KB → ~400KB + JSON < Vercel 4.5MB).
+- Privacy: photos NEVER persisted by application. Flow: compressed bytes → HTTP → server memory → AI provider → structured JSON → request completes. No filesystem /tmp / Blob / DB / cache / logs / GitHub persistence. Verified via code review + tests. Cache stores only `SHA-256(image bytes)+provider/model/promptVersion → structured result`, never base64/dataURL.
+- Security: `DELETE /api/cache` and `POST /api/cache/clear` disabled in production (404), `?provider=` override disabled in production (404), `GET /api/health` hides diagnostics in production (only `{status,mockMode,provider,modelId}`), CORS same-origin in production (no wildcard), only localhost:5173 allowed in dev. No `VITE_` secrets, no secret leakage in bundle or responses.
+- Vercel deployment: `server/app.ts` exports Express app, `server/index.ts` listens locally, `server.ts` + `api/index.ts` are Vercel entrypoints (zero-config Express, also `api` folder function). `vercel.json` with `buildCommand: npm run build`, `outputDirectory: dist`, `rewrites: [{source:"/api/(.*)", destination:"/api"}]` to funnel api to single function. Framework Vite. Static served from `dist` via Vercel CDN, api via Fluid compute function `λ api/index (1.62MB)`.
+- Providers unchanged: Vision Gemini→Groq fallback, Recipes Groq→Gemini, ZAI benchmark.
 
 ### Architecture (Current)
 
 ```
-Browser (React Vite) --/api--> Express (port 3001) -- ProviderRouter --┬─> Gemini 3.8 Flash (vision primary, recipe fallback)
-                                                                     ├─> Groq qwen/qwen3.8-27b (vision fallback, recipe primary)
-                                                                     └─> Z.AI glm-4.6v-flash (vision BENCHMARK, not primary)
-                             shared/* (schemas, normalization, pantry, validation)
-                             server/cache.ts (in-memory, SHA-256 keys, per-provider promptVersion)
+Browser (React Vite, imageCompression) --/api (same origin, no localhost:3001)--> Vercel (dist static via CDN + api/index Fluid Function)
+  compress 200KB ─┐   413 if >300KB      Express app (server/app.ts) -- ProviderRouter --┬─> Gemini 3.8 Flash (vision primary)
+  JPEG 1440 q0.84 ┘   CORS prod same-origin                                          ├─> Groq qwen/qwen3.8-27b (vision fallback, recipe primary)
+  EXIF stripped        health minimal prod                                            └─> Z.AI glm-4.6v-flash (benchmark, not primary)
+                              shared/* (schemas, normalization, pantry, validation)
+                              server/cache.ts (SHA-256 keys, no image bytes)
 ```
 
-- Providers: `VisionProvider` / `RecipeProvider` in `server/providers/types.ts` now supports `mock|gemini|groq|zai`
-- Implementations:
-  - `MockVisionProvider` / `MockRecipeProvider` — deterministic, no quota
-  - `GeminiVisionProvider` — `gemini-3.8-flash` via `@google/genai`
-  - `GroqVisionProvider` — `qwen/qwen3.8-27b` via `groq-sdk`, reasoning_effort none, strict JSON Schema
-  - `ZaiVisionProvider` — `glm-4.6v-flash` via direct HTTPS `https://api.z.ai/api/paas/v4/chat/completions` (OpenAI-compatible), `Authorization: Bearer ZAI_API_KEY`, data URL image, `response_format: {type:"json_object"}` with fallback without, prompt `zai-vision-v1`, same semantic rules as Gemini/Groq, sanitizes fences, local Zod validation, dedup, normalization
-- Routing (unchanged in this pass):
-  - **Vision PRODUCTION:** Gemini → Groq (fallback on 429/503 retryable only, at most one retry). ZAI is **BENCHMARK only**, not primary.
-  - **Recipes:** Groq → Gemini (unchanged)
-  - `server/providers/router.ts` still encapsulates Gemini/Groq chains; ZAI not in production chain by design (decision after benchmark)
-  - Dev explicit provider selection: `POST /api/fridge/analyze?provider=zai` (or body `provider`) when `NODE_ENV !== production` and key available, bypasses chain for benchmark; harness also directly instantiates providers
-- Cache:
-  - Vision key = SHA-256(image bytes) + provider/model + promptVersion (`v1` for gemini/groq, `zai-vision-v1` for zai)
-  - Recipe key unchanged
-  - Provider/model + promptVersion ensures `gemini` cached result never returned for `zai` request and vice versa; `zai` isolation tested
-  - Dev reset: `DELETE /api/cache` etc.
-- Health:
-  - `GET /api/health` now includes `vision.available.{gemini,groq,zai}`, `vision.benchmarkProviders:["gemini","groq","zai"]`, `zai:{available, model, apiBase}`, `models:{gemini,groq,zai}`, `cache`
-  - `GET /api/fridge/status` includes `zaiAvailable`
-  - Responses include `meta: {provider,modelId,cached,primary,fallback,requestedProvider?}` without secrets
-  - ZAI error mapping: 401 invalid key (ByteString), 400/1214 invalid param, 429 rate limit codes 1302/1303/1304/1305/1308/1113 etc mapped to controlled errors, never leak key
+- Providers: `VisionProvider` / `RecipeProvider` in `server/providers/types.ts` supports `mock|gemini|groq|zai`
+- Implementations: Mock (deterministic), Gemini (`gemini-3.8-flash` via `@google/genai`), Groq (`qwen/qwen3.8-27b` via `groq-sdk` strict), ZAI (`glm-4.6v-flash` via https)
+- Routing: Vision Gemini→Groq (retryable 429/503 only, at most one retry), Recipes Groq→Gemini, ZAI benchmark via `?provider=zai` in dev only.
+- Cache: Vision key = SHA-256(image bytes)+provider/model+promptVersion (`v1` / `zai-vision-v1`), Recipe key hashed sorted canonicals+pantry. LRU 100, no secrets, deep clone. Dev reset via DELETE/POST /api/cache (dev only).
+- Health: `GET /api/health` minimal in prod, full diagnostics in dev (`vision.available.{gemini,groq,zai}`, `models`, `cache`). `GET /api/fridge/status` includes `zaiAvailable`.
+- Frontend: `Step` includes `preparing` ("Подготавливаю фото…") before `photo`; analyzing is "Смотрю, что у тебя есть…"; privacy text near upload: "Фото используется для распознавания продуктов и не сохраняется в нашем хранилище. Для анализа фото временно передаётся сервису распознавания. Мы не сохраняем само изображение после обработки."
 
 ### Model IDs Locked
 
 - Gemini: `gemini-3.8-flash` (verified GA 2026-09-02)
 - Groq: `qwen/qwen3.8-27b` (verified via https://console.groq.com/docs/models)
-- Z.AI: `glm-4.6v-flash` (verified via https://docs.z.ai/guides/vlm/glm-4.6v and https://docs.z.ai/api-reference/llm/chat-completion — Vision model, Image/Video/Text/File input, 128K context, Lightweight, Completely Free, endpoint `https://api.z.ai/api/paas/v4/chat/completions`, enum includes `glm-4.6v-flash`). Do not silently substitute.
-- Z.AI endpoint and pricing verified 2026-09-13 via webfetch: base `https://api.z.ai/api/paas/v4`, model `glm-4.6v-flash`, free but with rate/daily limits (see error codes), context 128K, image limit 5M per image, 150 images max for 4.6V series
+- Z.AI: `glm-4.6v-flash` (verified via https://docs.z.ai/guides/vlm/glm-4.6v and https://docs.z.ai/api-reference/llm/chat-completion — endpoint `https://api.z.ai/api/paas/v4/chat/completions`, enum includes `glm-4.6v-flash`, 128K, free but rate-limited). Do not silently substitute.
+- Z.AI endpoint verified 2026-09-13.
 
 ### Security
 
-- `.env.example` now contains `GEMINI_API_KEY=`, `GROQ_API_KEY=`, `ZAI_API_KEY=` (no real secrets)
-- `.env.local` expected: `GEMINI_API_KEY=...` + `GROQ_API_KEY=...` + `ZAI_API_KEY=...` + `PORT=3001` (gitignored)
-- Keys never exposed in browser, API responses, logs, screenshots; only booleans `zaiAvailable` exposed
-- Live harness and dev endpoint never log Authorization header
+- `.env.example` contains `GEMINI_API_KEY=`, `GROQ_API_KEY=`, `ZAI_API_KEY=`, `PORT=3001` (no real secrets)
+- `.env.local` expected: `GEMINI_API_KEY=...` + `GROQ_API_KEY=...` + `ZAI_API_KEY=...` + `PORT=3001` + `VERCEL_OIDC_TOKEN` (gitignored via `.vercel`/.env*)
+- Vercel env vars configured via `vercel env add` for Production/Preview/Development (sensitive, hidden): `GEMINI_API_KEY`, `GROQ_API_KEY`, `ZAI_API_KEY`
+- Keys never exposed in browser bundle (checked via `vite build` output), API responses, logs, screenshots; only booleans exposed; health in prod minimal.
+- Live harness and dev endpoint never log Authorization header.
 
-### How to Go Live (ZAI Checkpoint Instructions)
+### Vercel Deployment (NEW)
+
+**Project:** `holodilnik` under `maximocappuccino-gmailcoms-projects` (Hobby)
+**Project ID:** `prj_fFGmz01ieTJSI6mwYsPlku7FyK6Y`
+**Production URL:** `https://holodilnik-seven.vercel.app` (aliased from `https://holodilnik-by7sspu6k-maximocappuccino-gmailcoms-projects.vercel.app`)
+**Preview URL (latest):** `https://holodilnik-oy18njvcz-maximocappuccino-gmailcoms-projects.vercel.app` (protected via Vercel SSO — shows Log in to Vercel for anonymous)
+**Build:** `npm run build` (`tsc -b && vite build`) → `dist` (Vite 246KB JS). Function `λ api/index (1.62MB)` + static `dist/index.html` etc. Build 20-25s in `iad1`.
+**Entrypoint:** `server/app.ts` (Express app) → `server/index.ts` (local) + `server.ts` + `api/index.ts` (Vercel). `vercel.json` with `buildCommand`, `outputDirectory`, `rewrites` for `/api`.
+**Env:** `GEMINI_API_KEY`, `GROQ_API_KEY`, `ZAI_API_KEY` set for Production/Preview/Development via CLI (sensitive).
+**Protection:** Preview SSO protected (`ssoProtection all_except_custom_domains`, `gitForkProtection true`). Production public (Hobby password protection requires Pro — 428). For closed test, use Preview with Vercel auth or upgrade plan/add dashboard password later. Documented per spec §15.
+
+**Verification (run 2026-09-16):**
+
+```
+curl -s https://holodilnik-seven.vercel.app/api/health
+→ {"status":"ok","mockMode":false,"provider":"gemini","modelId":"gemini-3.8-flash"} (prod minimal, no cache leak)
+
+curl -s -X DELETE https://holodilnik-seven.vercel.app/api/cache → 404 NOT_FOUND (blocked in prod)
+
+curl -s "https://holodilnik-seven.vercel.app/api/fridge/analyze?provider=groq" with valid 2000B image → 404 (provider override blocked)
+
+node synthetic: POST /api/fridge/analyze with tmp/vision-gauntlet/input/image-a.jpg (130050 bytes) → 200 (ingredients 7, includes cucumber/bell_pepper/cherry_tomato/egg/cheese)
+
+node synthetic: POST /api/recommendations with egg+tomato → 200 (3 recipes, slots fastest/normal/from_what_exists)
+
+node: POST /api/fridge/analyze with 400KB dummy → 413 IMAGE_TOO_LARGE Russian
+
+fetch with Origin https://example.com → no access-control-allow-origin (CORS same-origin)
+
+Frontend loads at / (200 HTML), Vite assets 246KB, no secret in bundle (grep VITE_ negative, grep GEMINI negative)
+
+Image policy: original 130KB → compressed via sharp analogy stays ≤200KB at 1440 q84 (tested in server/imageQualityRegression.test.ts 5 cases: 1086×1448→130KB, 4000×3000→≤200KB, 800×600 not upscaled, portrait/landscape long edge, metadata stripped)
+```
+
+**Known limitations:**
+
+- HEIC: Safari 17+ (iOS/macOS) decodes HEIC natively via `createImageBitmap` + `imageOrientation: "from-image"` → normalized to JPEG automatically. Chrome/Firefox cannot decode HEIC → `HEIC_DECODE_FAILED` with Russian guidance to convert via iOS Share → Save as JPEG or Settings → Camera → Most Compatible. Actual bytes always re-encoded JPEG, never MIME rename. Documented in `src/lib/imageCompression.ts`.
+- `express.static` ignored on Vercel — static served from `dist` via CDN; `server/app.ts` conditional on `process.env.VERCEL` (no static in prod function, 404 JSON catch-all). Local `npm run dev` still uses Vite proxy and `express.static` for preview.
+- Vercel Functions payload limit 4.5MB — our 300KB decoded → ~400KB base64 + JSON <1MB, comfortably below.
+- Large `api` function 1.62MB (within 250MB limit).
+
+### How to Go Live (ZAI Checkpoint Instructions — unchanged)
 
 **FILE TO EDIT:** `<repository root>/.env.local` (e.g. `D:\Programms\Max\Holodilnik\.env.local`)
 
@@ -83,9 +120,9 @@ ZAI_API_KEY=...
 PORT=3001
 ```
 
-**WHERE TO GET THE KEY:** Official Z.AI Open Platform API Keys page: https://z.ai/manage-apikey/apikey-list (or https://chat.z.ai → API Keys). Create key, copy `...` value. Do NOT paste into chat.
+**WHERE TO GET THE KEY:** https://z.ai/manage-apikey/apikey-list (or https://chat.z.ai → API Keys). Create key, copy `...` value. Do NOT paste into chat.
 
-**RATE LIMIT PAGE:** Z.AI API Key management → Rate Limits / https://docs.z.ai/api-reference/api-code (codes 1302 Rate limit, 1303 high frequency, 1304 daily limit, 1305 overloaded, 1308 usage limit, 1113 insufficient balance). Free model has daily/usage limits despite price free.
+**RATE LIMIT PAGE:** https://docs.z.ai/api-reference/api-code (codes 1302/1303/1304/1305/1308/1113).
 
 **COMMAND TO RESTART (from repo root):**
 
@@ -156,7 +193,7 @@ zai      | ... | ... |
 
 Second run of same image should show `cached:true` for all, no new quota.
 
-### 3-Image Vision Routing Gauntlet (NEW, 2026-09-14)
+### 3-Image Vision Routing Gauntlet (2026-09-14, unchanged)
 
 **Artifacts (sanitized, no keys):** `tmp/vision-gauntlet/input/image-a.jpg` (bdf58a...), `image-b.jpg` (cec0d7...), `image-c.jpg` (27fd92...), `tmp/vision-gauntlet/ground-truth.json`, `tmp/vision-gauntlet/results.json`, `tmp/vision-gauntlet/scorecard.json`, `tmp/vision-gauntlet/REPORT.md`. Baseline `tmp/fridge.jpg` NOT used as gauntlet image per spec. 5 PNGs in `tmp` (`0209d...`, `455f...`, `78b681...`, `8c47...`, `fda5...`) compressed via `scripts/compress-fridge-photo.ts --gauntlet` (PNG 1.9-2MB 1086x1448 → JPG 130-148KB 1086x1448, sharp mozjpeg q80, SHA-256 recorded).
 
@@ -210,16 +247,21 @@ Second run of same image should show `cached:true` for all, no new quota.
 
 **Artifact:** `tmp/live-vision-comparison.json` (138818 bytes, `tmp/fridge.jpg`) — Groq 3 corrections, ZAI 1 correction, Gemini quota 20/day. Now superseded.
 
-### Quality Gates (last run 2026-09-14 after 3-image gauntlet)
+### Quality Gates (last run 2026-09-16 after Vercel pass)
 
 ```
+npm run format:check ✓ (prettier)
+npm run lint        ✓ (eslint, 6 warnings in scripts/vision-gauntlet.ts only)
 npm run typecheck   ✓
-npm run lint        ✓
-npx prettier --check . ✓ (after --write)
-npm run test        ✓ 78/78 (shared + mock + groq + zai + router + cache + scoring)
-npm run build       ✓ (vite 240KB)
-npx playwright test ✓ 12/12 (chromium+mobile, MOCK_MODE=true, reuseExistingServer handled)
-npm run test:live:vision-gauntlet ✓ 3 images × 3 providers, rotation, strict fixed, cache verified, artifacts saved
+npm run test        ✓ 128/128 (shared 38 + mock 3 + groq 12 + zai 13 + router 19 + cache 11 + scoring 13 + imageCompression 15 + productionImagePolicy 17 + imageQualityRegression 5)
+npm run build       ✓ (vite 246KB js, tsc -b)
+npx playwright test ✓ 12/12 (chromium+mobile, MOCK_MODE=true, with valid 800×600 JPEG via sharp, preparing step handled)
+vercel --prod       ✓ https://holodilnik-seven.vercel.app (production, 38s, λ api/index 1.62MB, iad1)
+curl /api/health    ✓ 200 prod minimal
+curl DELETE /api/cache prod → 404
+curl POST /api/fridge/analyze?provider=groq prod → 404 (blocked)
+synthetic POST image-a.jpg 130KB → 200 (ingredients)
+synthetic POST 400KB dummy → 413 IMAGE_TOO_LARGE
 ```
 
 Live commands isolated, zero quota on second same-image cached rerun.
@@ -227,17 +269,20 @@ Live commands isolated, zero quota on second same-image cached rerun.
 ### Known Notes
 
 - Production routing remains Gemini→Groq, recipes Groq→Gemini — ZAI is benchmark only until gauntlet decision. Gauntlet shows ZAI best accuracy (4 vs 21) but 1/3 fail 1305, so hold.
-- ZAI image limit 5M (vs 8MB app) — app limit safe; Groq strict now fixed (quantityGuess/reason required) → strict:true succeeds.
-- Phone photo compress script: `scripts/compress-fridge-photo.ts` (sharp, 6000x6000, 5M, mozjpeg 80, resize to 1920) — `npm run compress:photo input.jpg [output.jpg]` and `npm run compress:photo -- --gauntlet` for 3 images.
-- Tiny 1x1 png still rejected; e2e uses 6KB dummy.
+- ZAI image limit 5M (vs 8MB app old) — now app limit 300KB, ZAI 5M safe.
+- Phone photo compress script: `scripts/compress-fridge-photo.ts` (sharp, 6000x6000, 5M, mozjpeg 80, resize to 1920) — `npm run compress:photo input.jpg [output.jpg]` and `npm run compress:photo -- --gauntlet` for 3 images. Now superseded by client-side `src/lib/imageCompression.ts` for production (browser canvas).
+- Client compression: target 200KB, hard 300KB, long edge 1440, quality 0.84→0.55 bounded, fallback dimensions 1280/1024/800/640, never upscale small images, EXIF stripped, HEIC handling documented (Safari native, Chrome/Firefox error with guidance).
+- Tiny 1x1 png still rejected; e2e now uses valid 800×600 JPEG via sharp (was 6KB dummy).
 - Playwright reuses system Chrome, workers 2; kill node before run if LIVE server running.
-- Do not commit `.env.local`, `tmp/*.jpg`, `tmp/vision-gauntlet/*.jpg` (but `ground-truth.json` is human-reviewed, keep in repo? Currently in tmp, not committed per spec — if needed, move to `tmp/vision-gauntlet/input` is gitignored via `tmp`).
-- 5 PNGs in `tmp` (1.9-2MB 1086x1448) → 3 JPGs in `tmp/vision-gauntlet/input` (130-148KB) for gauntlet; hero.png / fridge.jpg NOT used.
+- Do not commit `.env.local`, `tmp/*.jpg`, `tmp/vision-gauntlet/*.jpg` (tmp gitignored), `.vercel` gitignored.
+- Vercel: build 20-38s, function 1.62MB <250MB limit, payload 400KB base64 <4.5MB, CORS same-origin prod, health minimal prod.
+- Deployment protection: Preview SSO protected, Production public on Hobby (password requires Pro). For closed test, use Preview URL with Vercel auth.
 
 ### For Next Agent
 
-- Do not rewrite git history, do not commit secrets or `tmp/fridge.jpg` or `tmp/vision-gauntlet/input/*.jpg` (tmp is gitignored)
+- Do not rewrite git history, do not commit secrets or `tmp/fridge.jpg` or `tmp/vision-gauntlet/input/*.jpg` (tmp is gitignored) or `.env.local` (contains OIDC token)
 - Keep model IDs unchanged: `gemini-3.8-flash`, `qwen/qwen3.8-27b`, `glm-4.6v-flash`
-- See DECISIONS.md ADRs 022-025 for ZAI, cache, health, live results, gauntlet decision
-- See FAILURES.md F-019..F-021 for Groq strict, ZAI 1305, Gemini daily quota
+- See DECISIONS.md ADRs 026-032 for Vercel, compression, privacy, CORS, etc.
+- See FAILURES.md F-022..F-026 for HEIC, api routing, vercel build, etc.
 - If changing production routing, update `server/providers/router.ts` Vision chain to `Gemini → ZAI → Groq` only after explicit decision commit — current is HOLD per gauntlet (ZAI 2/3 success, need 3/3)
+- Next phase is Auth/Supabase/payments (not this pass)

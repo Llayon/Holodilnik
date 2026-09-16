@@ -29,12 +29,25 @@ router.post("/analyze", async (req, res) => {
 
     const { imageBase64, mimeType } = parsed.data;
 
-    // Size check
+    // Size check — measure decoded binary bytes, not base64 string length.
+    // Hard ceiling 300KB (see server/config.ts). Client target ~200KB.
+    // Base64 inflation (~33%) still keeps request < Vercel 4.5 MB limit.
     const base64Part = imageBase64.includes(",") ? imageBase64.split(",")[1] : imageBase64;
-    const bytes = Math.ceil((base64Part.length * 3) / 4);
+    let bytes: number;
+    try {
+      bytes = Buffer.from(base64Part.trim(), "base64").length;
+      // Detect invalid base64 that decodes to 0 or mismatched size due to whitespace?
+      // Fallback to estimate if Buffer gave 0 but string non-empty.
+      if (bytes === 0 && base64Part.trim().length > 0) {
+        bytes = Math.ceil((base64Part.trim().length * 3) / 4);
+      }
+    } catch {
+      bytes = Math.ceil((base64Part.trim().length * 3) / 4);
+    }
     if (bytes > config.maxImageBytes) {
       return res.status(413).json({
-        error: "Image too large (max 8MB)",
+        error:
+          "Фото слишком большое — пожалуйста, выберите другое или дайте приложению сжать его до ≤300 КБ",
         code: "IMAGE_TOO_LARGE",
       });
     }
@@ -73,10 +86,22 @@ router.post("/analyze", async (req, res) => {
     }
 
     // Dev-only explicit provider selection (benchmark, not production routing)
+    // In production this is intentionally unavailable — query/body provider is ignored.
+    // Privacy: image bytes are transient in request memory only and never persisted
+    // (not to filesystem /tmp / Blob / DB / cache / logs). See cache.ts for
+    // hash-only caching.
     const requestedProvider = (
       (req.query.provider as string | undefined) ?? (req.body?.provider as string | undefined)
     )?.toLowerCase();
     const isDev = process.env.NODE_ENV !== "production";
+    // Explicitly block provider override in production (return 404 so it is not enumerable)
+    if (
+      !isDev &&
+      requestedProvider &&
+      ["gemini", "groq", "zai", "mock"].includes(requestedProvider)
+    ) {
+      return res.status(404).json({ error: "Not found", code: "NOT_FOUND" });
+    }
     if (
       isDev &&
       requestedProvider &&

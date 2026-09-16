@@ -22,7 +22,9 @@ export const config = {
   groqModelId: GROQ_MODEL_ID,
   zaiModelId: ZAI_MODEL_ID,
   zaiApiBase: ZAI_API_BASE,
-  maxImageBytes: 8 * 1024 * 1024, // 8MB
+  // Production ceiling: 300 KB decoded bytes (client target ~200KB, hard <=300KB).
+  // Base64 inflation (~33%) keeps request under Vercel's 4.5 MB limit (~400KB b64).
+  maxImageBytes: 300 * 1024, // 300KB
 };
 
 function isValidKey(key: string): boolean {

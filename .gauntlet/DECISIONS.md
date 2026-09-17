@@ -239,3 +239,9 @@
 - **Decision:** `getRateLimitStore()` throws `RATE_LIMIT_STORE_UNAVAILABLE` in production when neither UPSTASH\_\* nor KV\_\* creds exist (no silent memory fallback). Expensive endpoints catch store errors _before_ provider calls and return 503 `RATE_LIMIT_UNAVAILABLE` (Russian "Сервис временно недоступен"). Upstash `get()`/`incr()` propagate REST errors instead of returning 0. `recordUsage()` failures _after_ a successful provider response only log (never discard a spent-quota result).
 - **Context:** Per follow-up instruction: never fall back to memory in prod; fail closed and report. Memory remains for dev/tests (incl. injected singleton).
 - **Consequence:** Prod without Redis → 503 on AI endpoints (unit-tested); prod with KV vars → live GETs succeed (verified in deployment smoke: 2 Redis GETs passed, request reached providers).
+
+## ADR-041: Groq vision output budget 800 (decoupled from recipes 2500)
+
+- **Decision:** `GROQ_VISION_MAX_COMPLETION_TOKENS = 800` in `server/config.ts`, used only by `GroqVisionProvider`. Recipe provider keeps its existing separate `max_completion_tokens: 2500` literal. Vision payload is small structured JSON; 2000 caused Groq on_demand OTPM 429 in prod smoke (limit 1000, asked 2000).
+- **Context:** Follow-up to the one-smoke 429 blocker. Budgets were already separate literals (verified decoupled, not shared config) — this pass only lowers vision.
+- **Consequence:** Prod smoke with 800 tokens → Groq fallback 200, 7 ingredients. Unit tests pin vision=800 (≤1000) and recipe=2500.

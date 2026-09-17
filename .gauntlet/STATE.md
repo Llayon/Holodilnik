@@ -1,6 +1,47 @@
 # STATE.md — Holodilnik Checkpoint
 
-## Current Checkpoint: PRODUCTION ROUTING SWITCH (ZAI PRIMARY) + PUBLIC ABUSE PROTECTION — DEPLOYED
+## Current Checkpoint: GROQ VISION FALLBACK FIX (800 TOKENS) — DEPLOYED + SMOKE 200 VIA GROQ
+
+**Date:** 2026-09-17
+**Branch:** master (pushed, clean)
+**Starting HEAD before pass:** c63c30e428d03bceb699d35cfede0f94a431bb5e
+**Ending HEAD:** 98169d4 (fix: lower Groq vision output budget to 800 tokens; docs commit follows)
+**Production URL:** https://holodilnik-seven.vercel.app
+
+### Change (tiny, as scoped)
+
+- `GROQ_VISION_MAX_COMPLETION_TOKENS = 800` (`server/config.ts`, single source). `GroqVisionProvider` uses it; was 2000 (rejected by Groq on_demand OTPM 1000 in prior smoke).
+- Recipe budget unchanged at 2500 (already a separate literal in `groqRecipe.ts`; verified decoupled).
+- No routing / timeout / Redis / recipe-behavior changes. Gemini still excluded from anon chain.
+
+### Successful production smoke (EXACTLY ONE live call, image-a.jpg 130050B)
+
+- HTTP 200, `meta.provider=groq`, `modelId=qwen/qwen3.8-27b`, `primary=zai`, `fallback=groq`, `cached=false`, 7 ingredients, 0 uncertain.
+- Client latency 3955ms; server latency 2597ms.
+- ZAI outcome: 429 code 1305 overloaded → chain fallback after 745ms (fast, no long retry).
+- Groq outcome: succeeded with 800-token budget — no OTPM 429. Acceptable outcome B.
+- Gemini calls = 0 (no Gemini lines in prod logs; chain has no Gemini path; `?provider=gemini` still 404).
+
+### Redis WRITE + TTL evidence (no secrets exposed)
+
+- Prod logs for the smoke request show the success line `attempted=zai succeeded=groq fallback=true cached=false` with NO `record_usage_failed` and NO `RATE_LIMIT_STORE_UNAVAILABLE` → `recordUsage` INCR (+EXPIRE on first write for the fresh device/IP keys) succeeded against Upstash from the Vercel function instance (separate invocation from any local machine).
+- Fresh random device ID → counters started at 1 → EXPIRE path exercised with `ttlUntilEndOfDaySeconds`; no `redis EXPIRE failed` in logs.
+- Hashed-key-only (`rate:vision:<ip|device>:<sha256>:YYYY-MM-DD`) proven by unit tests; prod logs contain no raw IP/device/base64/keys/secrets (verified in fetched log lines).
+- Direct local INCR roundtrip remains impossible without exposing secrets (`vercel env pull` redacts to `[SENSITIVE]`, F-030) — documented, not hidden.
+
+### Quality gates (this pass)
+
+```
+npm run format:check ✓
+npm run lint        ✓ (0 errors, 6 pre-existing warnings in vision-gauntlet.ts)
+npm run typecheck   ✓
+npm run test        ✓ 169/169 (+2 token-budget tests)
+npm run build       ✓
+npm run test:e2e    ✓ 12/12
+npx vercel --prod   ✓ READY, aliased holodilnik-seven.vercel.app
+```
+
+## Previous Checkpoint: PRODUCTION ROUTING SWITCH (ZAI PRIMARY) + PUBLIC ABUSE PROTECTION — DEPLOYED
 
 **Date:** 2026-09-17
 **Branch:** master (pushed, clean)

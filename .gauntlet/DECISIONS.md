@@ -233,3 +233,9 @@
 - **Decision:** Frontend `src/lib/deviceId.ts` (`crypto.randomUUID()`, `localStorage:holodilnik_device_id`, header `X-Holodilnik-Device-Id`). Server allows ASCII 8–128, ignores malformed. No canvas/hardware/ad IDs.
 - **Context:** Lightweight prototype identifier, not credits. 5/day device vs 20/day IP.
 - **Consequence:** Normal tester several tries; single-browser abuser capped. No balance UI.
+
+## ADR-040: Fail-closed rate limiting in production (no memory fallback)
+
+- **Decision:** `getRateLimitStore()` throws `RATE_LIMIT_STORE_UNAVAILABLE` in production when neither UPSTASH\_\* nor KV\_\* creds exist (no silent memory fallback). Expensive endpoints catch store errors _before_ provider calls and return 503 `RATE_LIMIT_UNAVAILABLE` (Russian "Сервис временно недоступен"). Upstash `get()`/`incr()` propagate REST errors instead of returning 0. `recordUsage()` failures _after_ a successful provider response only log (never discard a spent-quota result).
+- **Context:** Per follow-up instruction: never fall back to memory in prod; fail closed and report. Memory remains for dev/tests (incl. injected singleton).
+- **Consequence:** Prod without Redis → 503 on AI endpoints (unit-tested); prod with KV vars → live GETs succeed (verified in deployment smoke: 2 Redis GETs passed, request reached providers).

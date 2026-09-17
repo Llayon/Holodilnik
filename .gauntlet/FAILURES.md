@@ -166,6 +166,18 @@
 - **Cause:** Vitest default `environment: jsdom` provides `window/document`, triggering Groq's browser check. Existing `productionImagePolicy.test.ts` already used `/** @vitest-environment node */`.
 - **Fix:** Added node env header to `productionRouting.test.ts`. Real-chain construction tests now pass in Node.
 
+## F-029: PowerShell `curl.exe -d $body` mangled JSON → 500 (test-harness bug, not app)
+
+- **Symptom:** Manual prod checks `POST /api/fridge/analyze` returned `500 INTERNAL_ERROR`; Vercel logs showed `body-parser entity.parse.failed` with body `{mimeType:image/jpeg,imageBase64:AAA...}` (unquoted keys) and pretty-printed variants.
+- **Cause:** PowerShell `curl` alias + `ConvertTo-Json` (pretty, CRLF) passed through `curl.exe -d` lost quoting. Server correctly rejected malformed JSON (unhandled-handler 500 is pre-existing behavior for unparseable bodies).
+- **Fix:** Use Node `fetch` with `JSON.stringify` (see `tmp/prod-checks.mjs`, deleted after use). Override-block then verified 404 + health 200. No app change.
+
+## F-030: `vercel env pull` redacts secret values (`[SENSITIVE]` placeholders)
+
+- **Symptom:** Pulled production env file parsed `KV_REST_API_URL`/`TOKEN` as 11-char `[SENSITIVE]`; local Upstash REST proof script failed `ERR_INVALID_URL` (URL redacted as `[SENSITIVE]/incr/...`).
+- **Cause:** Vercel CLI does not disclose Sensitive variable values via `env pull` in this context (good security default). Values stay Hidden in dashboard/CLI.
+- **Fix:** No local REST write roundtrip; durability proven instead via (1) unit tests for KV resolution/precedence/fail-closed, (2) prod function executing 2 live Redis GETs successfully during smoke (would have 503'd otherwise). Test file deleted; no secrets ever printed. Documented honestly in STATE (INCR/EXPIRE live write pending first successful prod scan).
+
 ## Next Watch
 
 - If live Gemini returns `NO_FOOD_DETECTED` too often, tune vision prompt confidence threshold or add `mediaResolution` param.

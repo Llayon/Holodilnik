@@ -1,14 +1,77 @@
 # STATE.md — Holodilnik Checkpoint
 
-## Current Checkpoint: PRODUCTION ROUTING SWITCH (ZAI PRIMARY) + PUBLIC ABUSE PROTECTION — RATE LIMIT STORAGE CHECKPOINT READY (NOT YET DEPLOYED)
+## Current Checkpoint: PRODUCTION ROUTING SWITCH (ZAI PRIMARY) + PUBLIC ABUSE PROTECTION — DEPLOYED
 
 **Date:** 2026-09-17
-**Branch:** master (local commits, NOT pushed — waiting for Redis creds before prod deploy)
+**Branch:** master (pushed, clean)
 **Starting HEAD before pass:** 0e30eb4002399dc65ce6497717bf48bac1791763 (chore: document vercel deployment)
-**Ending HEAD:** (see `git log` after local commits below; push deferred per §24/§28)
-**Production URL (unchanged, still old routing until deploy):** https://holodilnik-seven.vercel.app
+**Ending HEAD:** 3d1b597 (fix: fail closed without Redis in production; see git log)
+**Production URL:** https://holodilnik-seven.vercel.app (aliased from holodilnik-jtqigizky deployment, iad1, build 17s)
+**Preview URL (build only, SSO-gated):** https://holodilnik-f4xa1iac0-maximocappuccino-gmailcoms-projects.vercel.app (build 17s OK; API returns SSO login redirect by design per ssoProtection)
 
-### Stop condition reached: B. RATE LIMIT STORAGE CHECKPOINT READY
+### Stop condition reached: A. ROUTING + RATE LIMIT DEPLOYED
+
+### Commits in this pass (pushed to origin/master)
+
+- `971566c feat: make GLM primary vision provider` (ZAI→Groq, no Gemini anon; device ID; Redis/memory store; limits; tests)
+- `5bbefdc chore: document ZAI-primary routing and rate-limit checkpoint` (STATE checkpoint B, ADRs 033-039, F-027/028)
+- `3d1b597 fix: fail closed without Redis in production` (prod throws RATE_LIMIT_STORE_UNAVAILABLE without KV/Upstash creds; routes 503; Upstash errors propagate; KV resolution + precedence + fail-closed tests)
+
+### Production vision policy (live-verified)
+
+- PRIMARY: Z.AI `glm-4.6v-flash`, FALLBACK: Groq `qwen/qwen3.8-27b`. Gemini NOT in anon chain.
+- `GET /api/health` → `{"status":"ok","mockMode":false,"provider":"zai","modelId":"glm-4.6v-flash"}`
+- `GET /api/fridge/status` → `provider:zai, vision:{primary:zai, fallback:groq}` (all three keys available, routing still zai→groq)
+- `?provider=groq` / `?provider=gemini` → 404 NOT_FOUND (override blocked, zero AI cost)
+- ONE smoke (image-a.jpg 130050B, random device UUID): ZAI attempted → `timeout after 10000ms` → `primary zai failed (10003ms), trying fallback groq` → Groq 429 OTPM tier limit → controlled 429 RATE_LIMITED to client. No Gemini in logs. No image/device/IP/keys logged (rid/provider/latency only).
+- Recipes: Groq-only in prod — `ENABLE_GEMINI_PRODUCTION_FALLBACK` unset in Vercel env (verified via `env ls`: only GEMINI/GROQ/ZAI + KV\_\*), unit tests prove unset → no Gemini fallback.
+
+### Rate limiting (live-verified where possible with ONE AI call)
+
+- Store: `upstash-redis` durable via `KV_REST_API_URL`+`KV_REST_API_TOKEN` (read-write token; UPSTASH\_\* takes precedence; resolution + precedence + prod-fail-closed covered by unit tests).
+- Prod function proved durable selection across invocations: smoke request executed 2 live Redis GETs (device+IP checks) successfully — missing creds or Redis failure would have returned 503 RATE_LIMIT_UNAVAILABLE instead of reaching providers. No store errors in Vercel logs.
+- Direct local INCR/TTL roundtrip was NOT possible: `vercel env pull` writes `[SENSITIVE]` placeholders for secret vars (verified: parsed values were literally 11-char `[SENSITIVE]`), so no local REST write test without exposing secrets. INCR/EXPIRE-on-first-write shares the proven `call()` helper (same auth/URL/wire format as the live GETs) and is covered by memory-adapter + logic tests; first successful prod scan will exercise it (counters increment only after successful provider response).
+- Limits: vision 5/device/day + 20/IP/day; recipes 20/device/day + 50/IP/day. 6th-device/21st-IP 429 DAILY_LIMIT_REACHED proven in integration tests (mock, zero quota).
+- Keys: `rate:<kind>:<ip|device>:<sha256>:YYYY-MM-DD`, TTL to next UTC midnight +1h; unit-tested that raw IDs never appear in keys. Vercel prod logs contain no raw IP/device/base64/keys/secrets.
+- Fail-closed: prod without Redis → 503 RATE_LIMIT_UNAVAILABLE (unit-tested); `recordUsage` failures after provider success only log (never discard a spent-quota result).
+
+### Quality gates (final, after all changes)
+
+```
+npm run format:check ✓
+npm run lint        ✓ (0 errors, 6 pre-existing warnings in vision-gauntlet.ts)
+npm run typecheck   ✓
+npm run test        ✓ 167/167 (was 128; +14 productionRouting, +22 rateLimit, +3 deviceId)
+npm run build       ✓ (246KB JS)
+npm run test:e2e    ✓ 12/12 (MOCK_MODE=true, system Chrome)
+npx vercel (preview) ✓ build 17s READY (API SSO-gated by design)
+npx vercel --prod    ✓ READY, aliased holodilnik-seven.vercel.app
+```
+
+No test makes live AI calls (F-027 mitigations hold). Exactly ONE live vision call this pass (smoke above); no gauntlet rerun; no recipe live calls.
+
+### For Next Agent
+
+- First successful prod vision scan will be the first live Redis INCR/EXPIRE write — check Vercel logs for `record_usage_failed` absence and Redis key presence via Upstash dashboard (never paste secrets in chat).
+- Groq OTPM tier limit (1000 limit, asked 2000 max_tokens) caused the smoke fallback failure — consider lowering Groq vision `max_completion_tokens` or upgrading Groq tier if fallback reliability matters. No code change made in this pass (out of scope).
+- Next phase is Auth/Supabase/payments (not started).
+
+---
+
+## Previous Checkpoint: RATE LIMIT STORAGE CHECKPOINT (superseded by deployment above)
+
+The Upstash/Vercel-KV setup notes from the prior checkpoint section are now complete (KV\_\* present for Preview+Production). Prior setup instructions retained in git history (`5bbefdc`) for reference.
+
+---
+
+## Superseded Checkpoint-B Draft (kept for history; deployment completed above)
+
+> NOTE (2026-09-17): everything below up to the next "Previous Checkpoint:
+> VERCEL PRODUCTION READINESS" header describes the pre-deploy checkpoint-B
+> state (push deferred, smoke deferred). It is superseded by the DEPLOYED
+> checkpoint at the top of this file. Retained for audit trail.
+
+### Stop condition B (superseded): RATE LIMIT STORAGE CHECKPOINT READY
 
 Code for ZAI-primary routing + anonymous rate limits is implemented and all
 quality gates pass locally. Production deploy is ON HOLD waiting for durable

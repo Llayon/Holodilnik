@@ -1,4 +1,5 @@
 import { Router } from "express";
+import crypto from "node:crypto";
 import {
   config,
   isMockMode,
@@ -12,11 +13,23 @@ import { ZaiVisionProvider } from "../providers/zaiVision.js";
 import { GeminiVisionProvider } from "../providers/geminiVision.js";
 import { GroqVisionProvider } from "../providers/groqVision.js";
 import { MockVisionProvider } from "../providers/mockVision.js";
+import { getVisionCache } from "../cache.js";
+import {
+  DEVICE_HEADER,
+  checkLimits,
+  getClientIp,
+  limitExceededResponse,
+  parseDeviceId,
+  recordUsage,
+} from "../rateLimit.js";
 
 const router = Router();
 
 router.post("/analyze", async (req, res) => {
+  const requestId = crypto.randomUUID().slice(0, 8);
+  const startedAt = Date.now();
   let effectiveMime = "image/jpeg";
+  let providerAttempted = "unknown";
   try {
     const parsed = analyzeRequestSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -153,19 +166,85 @@ router.post("/analyze", async (req, res) => {
     }
 
     const chain = new VisionProviderChain();
+    providerAttempted = chain.getPrimaryName();
+
+    // Cache-first: identical image/provider/model/prompt returns without
+    // consuming provider quota — and without consuming scan allowance.
+    // Privacy: cache key is SHA-256(image bytes)+provider/model/prompt,
+    // never raw bytes (see server/cache.ts).
+    const primaryModelId =
+      chain.getPrimaryName() === "zai"
+        ? config.zaiModelId
+        : chain.getPrimaryName() === "groq"
+          ? config.groqModelId
+          : config.modelId;
+    const cachedHit = getVisionCache({
+      imageBase64: base64Part,
+      provider: chain.getPrimaryName(),
+      modelId: primaryModelId,
+    });
+    if (cachedHit) {
+      console.log(
+        `[vision] rid=${requestId} attempted=${providerAttempted} succeeded=${providerAttempted} fallback=false cached=true latency=${Date.now() - startedAt}ms`,
+      );
+      if (cachedHit.ingredients.length === 0 && cachedHit.uncertainItems.length === 0) {
+        return res.status(422).json({
+          error: "No recognizable food found",
+          code: "NO_FOOD_DETECTED",
+          data: cachedHit,
+        });
+      }
+      return res.json({
+        data: cachedHit,
+        meta: {
+          provider: chain.getPrimaryName(),
+          modelId: primaryModelId,
+          cached: true,
+          primary: chain.getPrimaryName(),
+          fallback: chain.getFallbackName(),
+        },
+      });
+    }
+
+    // Anonymous abuse protection (after validation + cache check, before provider call).
+    // Malformed / oversized payloads above already returned without counting.
+    const ip = getClientIp(req);
+    const deviceId = parseDeviceId(req.headers[DEVICE_HEADER]);
+    const limits = await checkLimits("vision", { ip, deviceId });
+    if (!limits.allowed) {
+      const exceeded = limitExceededResponse();
+      console.log(
+        `[vision] rid=${requestId} rate_limited reason=${limits.reason} latency=${Date.now() - startedAt}ms`,
+      );
+      return res.status(exceeded.status).json(exceeded.body);
+    }
+
+    // Peek cache again via chain result flag for observability; chain handles
+    // fallback-cache internally.
     const { result, provider, modelId, cached } = await chain.analyze({
       imageBase64: base64Part,
       mimeType: effectiveMime,
     });
 
-    // If provider returned empty, treat as no recognizable food
+    // If provider returned empty, treat as no recognizable food.
+    // This still used provider quota, so it consumes allowance below.
     if (result.ingredients.length === 0 && result.uncertainItems.length === 0) {
+      if (!cached) await recordUsage("vision", { ip, deviceId });
+      console.log(
+        `[vision] rid=${requestId} attempted=${providerAttempted} succeeded=${provider} fallback=${provider !== providerAttempted} cached=${cached} latency=${Date.now() - startedAt}ms empty=true`,
+      );
       return res.status(422).json({
         error: "No recognizable food found",
         code: "NO_FOOD_DETECTED",
         data: result,
       });
     }
+
+    // Success (or cached): cached identical results do NOT consume allowance.
+    if (!cached) await recordUsage("vision", { ip, deviceId });
+    console.log(
+      `[vision] rid=${requestId} attempted=${providerAttempted} succeeded=${provider} fallback=${provider !== providerAttempted} cached=${cached} latency=${Date.now() - startedAt}ms`,
+    );
 
     return res.json({
       data: result,
@@ -179,7 +258,10 @@ router.post("/analyze", async (req, res) => {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("[fridge/analyze] error:", message);
+    // Never log image bytes / device / IP.
+    console.error(
+      `[vision] rid=${requestId} attempted=${providerAttempted} error_class=${classifyVisionError(message)} latency=${Date.now() - startedAt}ms msg=${message.slice(0, 300)}`,
+    );
 
     // Map known errors
     const lower = message.toLowerCase();
@@ -224,19 +306,33 @@ router.post("/analyze", async (req, res) => {
   }
 });
 
+function classifyVisionError(message: string): string {
+  const lower = message.toLowerCase();
+  if (message.includes("429") || lower.includes("quota") || /\b130[23458]\b/.test(message))
+    return "rate_limited";
+  if (lower.includes("timeout") || lower.includes("abort")) return "timeout";
+  if (message.includes("503") || lower.includes("overloaded") || lower.includes("unavailable"))
+    return "unavailable";
+  if (message.includes("Invalid JSON") || lower.includes("empty response")) return "malformed";
+  if (message.includes("401") || lower.includes("invalid")) return "auth_or_invalid";
+  return "provider_error";
+}
+
 router.get("/status", (_req, res) => {
   res.json({
     provider: isMockMode()
       ? "mock"
-      : isGeminiAvailable()
-        ? "gemini"
+      : isZaiAvailable()
+        ? "zai"
         : isGroqAvailable()
           ? "groq"
-          : "mock",
-    modelId: config.modelId,
+          : isGeminiAvailable()
+            ? "gemini"
+            : "mock",
+    modelId: config.zaiModelId,
     mockMode: isMockMode(),
     vision: {
-      primary: "gemini",
+      primary: "zai",
       fallback: "groq",
       geminiAvailable: isGeminiAvailable(),
       groqAvailable: isGroqAvailable(),

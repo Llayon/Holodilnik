@@ -12,6 +12,21 @@ export const VISION_PROMPT_VERSION = "v1" as const;
 export const ZAI_VISION_PROMPT_VERSION = "zai-vision-v1" as const;
 export const RECIPE_PROMPT_VERSION = "v1" as const;
 
+// Production vision policy (single source of truth):
+// PRIMARY = Z.AI GLM-4.6V-Flash, FALLBACK = Groq qwen/qwen3.8-27b.
+// Gemini is NOT part of the ordinary anonymous production chain
+// (kept for dev / benchmark / explicit ?provider=gemini).
+export const VISION_PRIMARY = "zai" as const;
+export const VISION_FALLBACK = "groq" as const;
+
+// Recipes remain Groq primary → Gemini fallback, but the Gemini fallback
+// can be disabled in public production to preserve scarce free quota.
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 export const config = {
   port: parseInt(process.env.PORT ?? "3001", 10),
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
@@ -25,6 +40,22 @@ export const config = {
   // Production ceiling: 300 KB decoded bytes (client target ~200KB, hard <=300KB).
   // Base64 inflation (~33%) keeps request under Vercel's 4.5 MB limit (~400KB b64).
   maxImageBytes: 300 * 1024, // 300KB
+  // Production vision policy (env-overridable, defaults to ZAI -> Groq).
+  visionPrimary: (process.env.VISION_PRIMARY ?? VISION_PRIMARY) as string,
+  visionFallback: (process.env.VISION_FALLBACK ?? VISION_FALLBACK) as string,
+  // Z.AI production timeout: fail fast (~10s) then fallback to Groq.
+  // No long 2s→5s→8s retry chain in the user path.
+  zaiTimeoutMs: parsePositiveInt(process.env.ZAI_TIMEOUT_MS, 10000),
+  groqTimeoutMs: parsePositiveInt(process.env.GROQ_TIMEOUT_MS, 15000),
+  // Recipe fallback switch: when false (default for public prototype),
+  // anonymous production recipe chain is Groq-only (no silent Gemini quota burn).
+  // Set ENABLE_GEMINI_PRODUCTION_FALLBACK=true to re-enable Groq→Gemini in prod.
+  enableGeminiProductionFallback: process.env.ENABLE_GEMINI_PRODUCTION_FALLBACK === "true",
+  // Anonymous prototype rate limits (per 24h UTC bucket, env-overridable).
+  visionDeviceDailyLimit: parsePositiveInt(process.env.VISION_DEVICE_DAILY_LIMIT, 5),
+  visionIpDailyLimit: parsePositiveInt(process.env.VISION_IP_DAILY_LIMIT, 20),
+  recipeDeviceDailyLimit: parsePositiveInt(process.env.RECIPE_DEVICE_DAILY_LIMIT, 20),
+  recipeIpDailyLimit: parsePositiveInt(process.env.RECIPE_IP_DAILY_LIMIT, 50),
 };
 
 function isValidKey(key: string): boolean {
@@ -54,15 +85,19 @@ export function isZaiAvailable(): boolean {
 }
 
 export function isMockMode(): boolean {
+  // Dynamic env check so tests can force mock via process.env.MOCK_MODE.
+  if (process.env.MOCK_MODE === "true") return true;
   if (config.mockMode) return true;
-  // Mock only if neither provider has a key
-  if (!config.geminiApiKey && !config.groqApiKey) return true;
+  // Mock only if no provider has a key (any of gemini/groq/zai keeps live mode)
+  if (!config.geminiApiKey && !config.groqApiKey && !config.zaiApiKey) return true;
+  // If keys exist but all invalid placeholders, still mock to avoid ByteString crashes
+  if (!isGeminiAvailable() && !isGroqAvailable() && !isZaiAvailable()) return true;
   return false;
 }
 
 export function logConfig(): void {
   console.log(
-    `[config] gemini=${GEMINI_MODEL_ID} groq=${GROQ_MODEL_ID} zai=${ZAI_MODEL_ID} mockMode=${isMockMode()} port=${config.port} visionPrimary=gemini recipesPrimary=groq benchmark=zai`,
+    `[config] gemini=${GEMINI_MODEL_ID} groq=${GROQ_MODEL_ID} zai=${ZAI_MODEL_ID} mockMode=${isMockMode()} port=${config.port} visionPrimary=${config.visionPrimary} visionFallback=${config.visionFallback} recipesPrimary=groq geminiProdFallback=${config.enableGeminiProductionFallback}`,
   );
   console.log(
     `[config] geminiAvailable=${isGeminiAvailable()} groqAvailable=${isGroqAvailable()} zaiAvailable=${isZaiAvailable()} mockModeFlag=${config.mockMode}`,

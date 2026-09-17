@@ -85,12 +85,18 @@ export class ZaiVisionProvider implements VisionProvider {
   readonly promptVersion = ZAI_VISION_PROMPT_VERSION;
   private apiKey: string;
   private apiBase: string;
+  private timeoutMs: number;
 
-  constructor(apiKey?: string, apiBase?: string) {
+  constructor(apiKey?: string, apiBase?: string, opts?: { timeoutMs?: number }) {
     const key = apiKey ?? config.zaiApiKey;
     if (!key) throw new Error("ZAI_API_KEY is required for ZaiVisionProvider");
     this.apiKey = key;
     this.apiBase = apiBase ?? config.zaiApiBase ?? ZAI_API_BASE;
+    this.timeoutMs = opts?.timeoutMs ?? config.zaiTimeoutMs ?? 10000;
+  }
+
+  getTimeoutMs(): number {
+    return this.timeoutMs;
   }
 
   async analyzeFridgeImage(params: {
@@ -124,7 +130,8 @@ export class ZaiVisionProvider implements VisionProvider {
     ];
 
     // Try with json_object first (strongest mode we can attempt without strict schema)
-    // If API returns 1214 invalid parameter, retry without response_format
+    // If API returns 1214 invalid parameter, retry ONCE immediately without response_format.
+    // No timed backoff chain here — production router falls back to Groq fast.
     const tryCall = async (withJsonObject: boolean) => {
       const body: Record<string, unknown> = {
         model: this.modelId,
@@ -139,44 +146,52 @@ export class ZaiVisionProvider implements VisionProvider {
       // For glm-4.6v-flash, thinking is optional, default disabled; we explicitly disable to save tokens
       // body.thinking = { type: "disabled" }; // uncomment if needed, but omit to keep minimal
 
-      const res = await fetch(`${this.apiBase}/chat/completions`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
-      const text = await res.text();
-      let json: unknown;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
       try {
-        json = JSON.parse(text);
-      } catch {
-        throw new Error(`Invalid JSON from Z.AI HTTP ${res.status}: ${text.slice(0, 500)}`);
+        const res = await fetch(`${this.apiBase}/chat/completions`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        const text = await res.text();
+        let json: unknown;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          throw new Error(`Invalid JSON from Z.AI HTTP ${res.status}: ${text.slice(0, 500)}`);
+        }
+        if (!res.ok) {
+          // Z.AI error body contains {code, message} or {error:{code,message}}
+          const errObj = json as Record<string, unknown>;
+          const code =
+            (errObj.code as number | undefined) ??
+            ((errObj.error as Record<string, unknown> | undefined)?.code as number | undefined);
+          const msg =
+            (errObj.message as string | undefined) ??
+            ((errObj.error as Record<string, unknown> | undefined)?.message as
+              string | undefined) ??
+            text;
+          const err = new Error(`${res.status} ZAI error code ${code ?? res.status}: ${msg}`);
+          // Attach code for mapping
+          (err as unknown as { status?: number; code?: number }).status = res.status;
+          (err as unknown as { code?: number }).code = code;
+          // Preserve raw for debugging but not secret
+          throw err;
+        }
+        return json as {
+          choices?: Array<{ message?: { content?: string } }>;
+          id?: string;
+          model?: string;
+          usage?: unknown;
+        };
+      } finally {
+        clearTimeout(timer);
       }
-      if (!res.ok) {
-        // Z.AI error body contains {code, message} or {error:{code,message}}
-        const errObj = json as Record<string, unknown>;
-        const code =
-          (errObj.code as number | undefined) ??
-          ((errObj.error as Record<string, unknown> | undefined)?.code as number | undefined);
-        const msg =
-          (errObj.message as string | undefined) ??
-          ((errObj.error as Record<string, unknown> | undefined)?.message as string | undefined) ??
-          text;
-        const err = new Error(`${res.status} ZAI error code ${code ?? res.status}: ${msg}`);
-        // Attach code for mapping
-        (err as unknown as { status?: number; code?: number }).status = res.status;
-        (err as unknown as { code?: number }).code = code;
-        // Preserve raw for debugging but not secret
-        throw err;
-      }
-      return json as {
-        choices?: Array<{ message?: { content?: string } }>;
-        id?: string;
-        model?: string;
-        usage?: unknown;
-      };
     };
 
     let raw: Awaited<ReturnType<typeof tryCall>>;
@@ -261,6 +276,14 @@ export class ZaiVisionProvider implements VisionProvider {
       };
     } catch (err: unknown) {
       const rawMsg = err instanceof Error ? err.message : String(err);
+      const isAbort =
+        (err instanceof Error && err.name === "AbortError") ||
+        rawMsg.toLowerCase().includes("aborted") ||
+        rawMsg.toLowerCase().includes("abort");
+      if (isAbort) {
+        console.error(`[zaiVision] timeout after ${this.timeoutMs}ms`);
+        throw new Error(`ZAI vision failed: timeout after ${this.timeoutMs}ms`);
+      }
       if (rawMsg.includes("ByteString")) {
         console.error(
           "[zaiVision] invalid ZAI_API_KEY (non-ASCII/placeholder):",

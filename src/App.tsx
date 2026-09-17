@@ -32,7 +32,7 @@ export default function App() {
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingRecs, setLoadingRecs] = useState(false);
-  const [providerMode, setProviderMode] = useState<"mock" | "gemini" | "groq" | "unknown">(
+  const [providerMode, setProviderMode] = useState<"mock" | "gemini" | "groq" | "zai" | "unknown">(
     "unknown",
   );
   const [modelId, setModelId] = useState<string>("");
@@ -48,7 +48,7 @@ export default function App() {
   useEffect(() => {
     checkHealth()
       .then((h) => {
-        const mode = h.mockMode ? "mock" : (h.provider as "gemini" | "groq" | "mock");
+        const mode = h.mockMode ? "mock" : (h.provider as "gemini" | "groq" | "zai" | "mock");
         setProviderMode(mode ?? "unknown");
         setModelId(h.modelId);
         if (h.vision)
@@ -227,12 +227,12 @@ export default function App() {
       <header className="app-header">
         <div className="logo">Холодильник</div>
         <div
-          className={`mock-badge ${providerMode === "mock" ? "mock" : providerMode === "gemini" || providerMode === "groq" ? "live" : ""}`}
+          className={`mock-badge ${providerMode === "mock" ? "mock" : providerMode === "gemini" || providerMode === "groq" || providerMode === "zai" ? "live" : ""}`}
           data-testid="provider-badge"
         >
           {providerMode === "mock"
             ? "MOCK"
-            : providerMode === "gemini" || providerMode === "groq"
+            : providerMode === "gemini" || providerMode === "groq" || providerMode === "zai"
               ? `LIVE · ${modelId}`
               : "…"}
         </div>

@@ -57,12 +57,20 @@ function handleHealth(_req: express.Request, res: express.Response) {
   const zaiAvail = isZaiAvailable();
   const isProd = process.env.NODE_ENV === "production";
 
-  // Minimal safe payload in production; full diagnostics in dev
+  // Minimal safe payload in production; full diagnostics in dev.
+  // Production vision policy: primary=zai (glm-4.6v-flash), fallback=groq.
+  const prodProvider = mockMode ? "mock" : zaiAvail ? "zai" : groqAvail ? "groq" : "mock";
+  const prodModel =
+    prodProvider === "zai"
+      ? config.zaiModelId
+      : prodProvider === "groq"
+        ? config.groqModelId
+        : config.modelId;
   const base = {
     status: "ok" as const,
     mockMode,
-    provider: mockMode ? "mock" : geminiAvail ? "gemini" : groqAvail ? "groq" : "mock",
-    modelId: config.modelId,
+    provider: prodProvider,
+    modelId: prodModel,
   };
 
   if (isProd) {
@@ -73,11 +81,11 @@ function handleHealth(_req: express.Request, res: express.Response) {
   return res.json({
     ...base,
     vision: {
-      primary: "gemini",
+      primary: "zai",
       fallback: "groq",
       geminiAvailable: geminiAvail,
       groqAvailable: groqAvail,
-      primaryAvailable: geminiAvail,
+      primaryAvailable: zaiAvail,
       available: {
         gemini: geminiAvail,
         groq: groqAvail,
@@ -87,10 +95,11 @@ function handleHealth(_req: express.Request, res: express.Response) {
     },
     recipes: {
       primary: "groq",
-      fallback: "gemini",
+      fallback: config.enableGeminiProductionFallback ? "gemini" : undefined,
       groqAvailable: groqAvail,
       geminiAvailable: geminiAvail,
       primaryAvailable: groqAvail,
+      geminiFallbackEnabled: config.enableGeminiProductionFallback,
     },
     zai: {
       available: zaiAvail,

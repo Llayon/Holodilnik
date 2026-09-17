@@ -1,6 +1,7 @@
 import type { FridgeAnalysisResult, RecommendationsResult } from "../../shared/types.js";
+import { DEVICE_HEADER, getDeviceId } from "./deviceId";
 
-export type ApiMode = "mock" | "gemini" | "groq" | "unknown";
+export type ApiMode = "mock" | "gemini" | "groq" | "zai" | "unknown";
 
 export interface ApiError {
   message: string;
@@ -27,7 +28,7 @@ export async function analyzeFridge(params: { imageBase64: string; mimeType: str
 }> {
   const res = await fetch("/api/fridge/analyze", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", [DEVICE_HEADER]: getDeviceId() },
     body: JSON.stringify(params),
   });
 
@@ -55,7 +56,7 @@ export async function getRecommendations(params: {
 }> {
   const res = await fetch("/api/recommendations", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", [DEVICE_HEADER]: getDeviceId() },
     body: JSON.stringify(params),
   });
 
@@ -94,6 +95,8 @@ export function humanizeApiError(e: unknown): string {
         return "Не нашёл еду на фото. Попробуйте снять ближе или с лучшим светом.";
       case "RATE_LIMITED":
         return e.message || "Превышен лимит запросов — подождите 20-30 секунд и попробуйте снова.";
+      case "DAILY_LIMIT_REACHED":
+        return "На сегодня тестовый лимит закончился. Попробуйте снова завтра.";
       case "INVALID_PROVIDER_RESPONSE":
         return "Не удалось распознать содержимое — попробуйте ещё раз.";
       case "PROVIDER_ERROR":

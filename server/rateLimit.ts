@@ -101,15 +101,12 @@ export class UpstashRedisRateLimitStore implements RateLimitStore {
   }
 
   async get(key: string): Promise<number> {
-    try {
-      const raw = await this.call<string | number | null>(`get/${encodeURIComponent(key)}`);
-      if (raw === null || raw === undefined) return 0;
-      const n = typeof raw === "number" ? raw : parseInt(String(raw), 10);
-      return Number.isFinite(n) ? n : 0;
-    } catch (err) {
-      console.error("[rateLimit] redis GET failed, treating as 0:", String(err).slice(0, 200));
-      return 0;
-    }
+    // Fail-closed in production: propagate Redis errors so routes return 503
+    // instead of serving unlimited requests. Dev/tests use memory store.
+    const raw = await this.call<string | number | null>(`get/${encodeURIComponent(key)}`);
+    if (raw === null || raw === undefined) return 0;
+    const n = typeof raw === "number" ? raw : parseInt(String(raw), 10);
+    return Number.isFinite(n) ? n : 0;
   }
 
   async incr(key: string, ttlSeconds: number): Promise<number> {
@@ -133,26 +130,18 @@ export class UpstashRedisRateLimitStore implements RateLimitStore {
 }
 
 export function getRedisCredentials(): { url: string; token: string } | null {
-  const url =
-    process.env.UPSTASH_REDIS_REST_URL ??
-    process.env.KV_REST_API_URL ??
-    process.env.KV_REST_API_URL;
-  const token =
-    process.env.UPSTASH_REDIS_REST_TOKEN ??
-    process.env.KV_REST_API_TOKEN ??
-    process.env.KV_REST_API_TOKEN;
-  // Note: KV_* fallback duplicated intentionally for clarity; UPSTASH_* wins.
+  // UPSTASH_* takes precedence; Vercel Upstash integration injects KV_*.
+  // Must use read-write TOKEN (not READ_ONLY) for INCR/EXPIRE.
   const resolvedUrl = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL;
   const resolvedToken = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
-  void url;
-  void token;
   if (resolvedUrl && resolvedToken) return { url: resolvedUrl, token: resolvedToken };
   return null;
 }
 
-// Singleton store: durable Redis when credentials exist, memory otherwise.
-// In production without Redis credentials we explicitly log a loud warning
-// (never silently pretend memory is reliable across serverless instances).
+// Singleton store: durable Redis when credentials exist.
+// In production there is NO memory fallback — fail closed (throw) so expensive
+// AI endpoints return 503 instead of serving unlimited requests across
+// ephemeral serverless instances. Dev/tests use memory.
 let singleton: RateLimitStore | null = null;
 
 export function getRateLimitStore(): RateLimitStore {
@@ -160,14 +149,14 @@ export function getRateLimitStore(): RateLimitStore {
   const creds = getRedisCredentials();
   if (creds) {
     singleton = new UpstashRedisRateLimitStore(creds.url, creds.token);
-  } else {
-    singleton = new MemoryRateLimitStore();
-    if (process.env.NODE_ENV === "production") {
-      console.error(
-        "[rateLimit] WARNING: no UPSTASH_REDIS_REST_URL/TOKEN (or KV_*) in production — using ephemeral memory limiter. Set up Upstash Redis before public use (see .gauntlet/STATE.md checkpoint).",
-      );
-    }
+    return singleton;
   }
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "RATE_LIMIT_STORE_UNAVAILABLE: no UPSTASH_REDIS_REST_URL/TOKEN (or KV_REST_API_URL/TOKEN) in production",
+    );
+  }
+  singleton = new MemoryRateLimitStore();
   return singleton;
 }
 

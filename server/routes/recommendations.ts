@@ -80,7 +80,19 @@ router.post("/", async (req, res) => {
       });
     }
 
-    const limits = await checkLimits("recipe", { ip, deviceId });
+    let limits;
+    try {
+      limits = await checkLimits("recipe", { ip, deviceId });
+    } catch (storeErr) {
+      const storeMsg = storeErr instanceof Error ? storeErr.message : String(storeErr);
+      console.error(
+        `[recipes] rid=${requestId} rate_limit_store_unavailable msg=${storeMsg.slice(0, 200)}`,
+      );
+      return res.status(503).json({
+        error: "Сервис временно недоступен, попробуйте позже",
+        code: "RATE_LIMIT_UNAVAILABLE",
+      });
+    }
     if (!limits.allowed) {
       const exceeded = limitExceededResponse();
       console.log(
@@ -99,7 +111,15 @@ router.post("/", async (req, res) => {
       });
     }
 
-    if (!cached) await recordUsage("recipe", { ip, deviceId });
+    if (!cached) {
+      try {
+        await recordUsage("recipe", { ip, deviceId });
+      } catch (storeErr) {
+        console.error(
+          `[recipes] rid=${requestId} record_usage_failed msg=${String(storeErr).slice(0, 200)}`,
+        );
+      }
+    }
     console.log(
       `[recipes] rid=${requestId} attempted=${primaryName} succeeded=${provider} fallback=${provider !== primaryName} cached=${cached} latency=${Date.now() - startedAt}ms`,
     );
@@ -119,6 +139,13 @@ router.post("/", async (req, res) => {
     console.error(
       `[recipes] rid=${requestId} attempted=${primaryName} error latency=${Date.now() - startedAt}ms msg=${message.slice(0, 300)}`,
     );
+
+    if (message.includes("RATE_LIMIT_STORE_UNAVAILABLE")) {
+      return res.status(503).json({
+        error: "Сервис временно недоступен, попробуйте позже",
+        code: "RATE_LIMIT_UNAVAILABLE",
+      });
+    }
 
     const lower = message.toLowerCase();
     if (

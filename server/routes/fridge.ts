@@ -208,9 +208,23 @@ router.post("/analyze", async (req, res) => {
 
     // Anonymous abuse protection (after validation + cache check, before provider call).
     // Malformed / oversized payloads above already returned without counting.
+    // Fail-closed: if the durable store is unavailable in production, return
+    // 503 instead of serving unlimited requests.
     const ip = getClientIp(req);
     const deviceId = parseDeviceId(req.headers[DEVICE_HEADER]);
-    const limits = await checkLimits("vision", { ip, deviceId });
+    let limits;
+    try {
+      limits = await checkLimits("vision", { ip, deviceId });
+    } catch (storeErr) {
+      const storeMsg = storeErr instanceof Error ? storeErr.message : String(storeErr);
+      console.error(
+        `[vision] rid=${requestId} rate_limit_store_unavailable msg=${storeMsg.slice(0, 200)}`,
+      );
+      return res.status(503).json({
+        error: "Сервис временно недоступен, попробуйте позже",
+        code: "RATE_LIMIT_UNAVAILABLE",
+      });
+    }
     if (!limits.allowed) {
       const exceeded = limitExceededResponse();
       console.log(
@@ -228,8 +242,18 @@ router.post("/analyze", async (req, res) => {
 
     // If provider returned empty, treat as no recognizable food.
     // This still used provider quota, so it consumes allowance below.
+    // recordUsage failure after a successful provider call must not discard
+    // the result (quota already spent); log and continue.
     if (result.ingredients.length === 0 && result.uncertainItems.length === 0) {
-      if (!cached) await recordUsage("vision", { ip, deviceId });
+      if (!cached) {
+        try {
+          await recordUsage("vision", { ip, deviceId });
+        } catch (storeErr) {
+          console.error(
+            `[vision] rid=${requestId} record_usage_failed msg=${String(storeErr).slice(0, 200)}`,
+          );
+        }
+      }
       console.log(
         `[vision] rid=${requestId} attempted=${providerAttempted} succeeded=${provider} fallback=${provider !== providerAttempted} cached=${cached} latency=${Date.now() - startedAt}ms empty=true`,
       );
@@ -241,7 +265,15 @@ router.post("/analyze", async (req, res) => {
     }
 
     // Success (or cached): cached identical results do NOT consume allowance.
-    if (!cached) await recordUsage("vision", { ip, deviceId });
+    if (!cached) {
+      try {
+        await recordUsage("vision", { ip, deviceId });
+      } catch (storeErr) {
+        console.error(
+          `[vision] rid=${requestId} record_usage_failed msg=${String(storeErr).slice(0, 200)}`,
+        );
+      }
+    }
     console.log(
       `[vision] rid=${requestId} attempted=${providerAttempted} succeeded=${provider} fallback=${provider !== providerAttempted} cached=${cached} latency=${Date.now() - startedAt}ms`,
     );
@@ -262,6 +294,14 @@ router.post("/analyze", async (req, res) => {
     console.error(
       `[vision] rid=${requestId} attempted=${providerAttempted} error_class=${classifyVisionError(message)} latency=${Date.now() - startedAt}ms msg=${message.slice(0, 300)}`,
     );
+
+    // Fail-closed: durable store unavailable in production.
+    if (message.includes("RATE_LIMIT_STORE_UNAVAILABLE")) {
+      return res.status(503).json({
+        error: "Сервис временно недоступен, попробуйте позже",
+        code: "RATE_LIMIT_UNAVAILABLE",
+      });
+    }
 
     // Map known errors
     const lower = message.toLowerCase();

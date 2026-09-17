@@ -10,6 +10,7 @@ import {
   __setRateLimitStoreForTests,
   __resetRateLimitStoreForTests,
   getRateLimitStore,
+  getRedisCredentials,
   parseDeviceId,
   normalizeIp,
   getClientIp,
@@ -98,10 +99,12 @@ describe("rateLimit primitives", () => {
     const prevTok = process.env.UPSTASH_REDIS_REST_TOKEN;
     const prevKvUrl = process.env.KV_REST_API_URL;
     const prevKvTok = process.env.KV_REST_API_TOKEN;
+    const prevNode = process.env.NODE_ENV;
     delete process.env.UPSTASH_REDIS_REST_URL;
     delete process.env.UPSTASH_REDIS_REST_TOKEN;
     delete process.env.KV_REST_API_URL;
     delete process.env.KV_REST_API_TOKEN;
+    process.env.NODE_ENV = "development";
     try {
       const store = getRateLimitStore();
       expect(store.isDurable).toBe(false);
@@ -111,6 +114,91 @@ describe("rateLimit primitives", () => {
       if (prevTok !== undefined) process.env.UPSTASH_REDIS_REST_TOKEN = prevTok;
       if (prevKvUrl !== undefined) process.env.KV_REST_API_URL = prevKvUrl;
       if (prevKvTok !== undefined) process.env.KV_REST_API_TOKEN = prevKvTok;
+      if (prevNode !== undefined) process.env.NODE_ENV = prevNode;
+      __resetRateLimitStoreForTests();
+    }
+  });
+  it("resolves Vercel KV vars (KV_REST_API_URL/TOKEN) to durable Redis store", async () => {
+    __resetRateLimitStoreForTests();
+    const prevUpUrl = process.env.UPSTASH_REDIS_REST_URL;
+    const prevUpTok = process.env.UPSTASH_REDIS_REST_TOKEN;
+    const prevKvUrl = process.env.KV_REST_API_URL;
+    const prevKvTok = process.env.KV_REST_API_TOKEN;
+    const prevNode = process.env.NODE_ENV;
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    process.env.KV_REST_API_URL = "https://test-kv.upstash.io";
+    process.env.KV_REST_API_TOKEN = "test-token-1234567890";
+    process.env.NODE_ENV = "production";
+    try {
+      expect(getRedisCredentials()).toEqual({
+        url: "https://test-kv.upstash.io",
+        token: "test-token-1234567890",
+      });
+      const store = getRateLimitStore();
+      expect(store.isDurable).toBe(true);
+      expect(store.name).toBe("upstash-redis");
+    } finally {
+      if (prevUpUrl !== undefined) process.env.UPSTASH_REDIS_REST_URL = prevUpUrl;
+      else delete process.env.UPSTASH_REDIS_REST_URL;
+      if (prevUpTok !== undefined) process.env.UPSTASH_REDIS_REST_TOKEN = prevUpTok;
+      else delete process.env.UPSTASH_REDIS_REST_TOKEN;
+      if (prevKvUrl !== undefined) process.env.KV_REST_API_URL = prevKvUrl;
+      else delete process.env.KV_REST_API_URL;
+      if (prevKvTok !== undefined) process.env.KV_REST_API_TOKEN = prevKvTok;
+      else delete process.env.KV_REST_API_TOKEN;
+      if (prevNode !== undefined) process.env.NODE_ENV = prevNode;
+      else delete process.env.NODE_ENV;
+      __resetRateLimitStoreForTests();
+    }
+  });
+  it("UPSTASH_* takes precedence over KV_*", () => {
+    const prevUpUrl = process.env.UPSTASH_REDIS_REST_URL;
+    const prevUpTok = process.env.UPSTASH_REDIS_REST_TOKEN;
+    const prevKvUrl = process.env.KV_REST_API_URL;
+    const prevKvTok = process.env.KV_REST_API_TOKEN;
+    process.env.UPSTASH_REDIS_REST_URL = "https://upstash-prio.upstash.io";
+    process.env.UPSTASH_REDIS_REST_TOKEN = "upstash-token";
+    process.env.KV_REST_API_URL = "https://kv-other.upstash.io";
+    process.env.KV_REST_API_TOKEN = "kv-token";
+    try {
+      expect(getRedisCredentials()).toEqual({
+        url: "https://upstash-prio.upstash.io",
+        token: "upstash-token",
+      });
+    } finally {
+      if (prevUpUrl !== undefined) process.env.UPSTASH_REDIS_REST_URL = prevUpUrl;
+      else delete process.env.UPSTASH_REDIS_REST_URL;
+      if (prevUpTok !== undefined) process.env.UPSTASH_REDIS_REST_TOKEN = prevUpTok;
+      else delete process.env.UPSTASH_REDIS_REST_TOKEN;
+      if (prevKvUrl !== undefined) process.env.KV_REST_API_URL = prevKvUrl;
+      else delete process.env.KV_REST_API_URL;
+      if (prevKvTok !== undefined) process.env.KV_REST_API_TOKEN = prevKvTok;
+      else delete process.env.KV_REST_API_TOKEN;
+      __resetRateLimitStoreForTests();
+    }
+  });
+  it("production without Redis fails closed (no memory fallback)", async () => {
+    __resetRateLimitStoreForTests();
+    const prevUpUrl = process.env.UPSTASH_REDIS_REST_URL;
+    const prevUpTok = process.env.UPSTASH_REDIS_REST_TOKEN;
+    const prevKvUrl = process.env.KV_REST_API_URL;
+    const prevKvTok = process.env.KV_REST_API_TOKEN;
+    const prevNode = process.env.NODE_ENV;
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    delete process.env.KV_REST_API_URL;
+    delete process.env.KV_REST_API_TOKEN;
+    process.env.NODE_ENV = "production";
+    try {
+      expect(() => getRateLimitStore()).toThrow(/RATE_LIMIT_STORE_UNAVAILABLE/);
+    } finally {
+      if (prevUpUrl !== undefined) process.env.UPSTASH_REDIS_REST_URL = prevUpUrl;
+      if (prevUpTok !== undefined) process.env.UPSTASH_REDIS_REST_TOKEN = prevUpTok;
+      if (prevKvUrl !== undefined) process.env.KV_REST_API_URL = prevKvUrl;
+      if (prevKvTok !== undefined) process.env.KV_REST_API_TOKEN = prevKvTok;
+      if (prevNode !== undefined) process.env.NODE_ENV = prevNode;
+      else delete process.env.NODE_ENV;
       __resetRateLimitStoreForTests();
     }
   });
@@ -322,5 +410,47 @@ describe("vision/device/IP limits via API (mock, no live calls)", () => {
       .send({ imageBase64: makeImageBytes(950), mimeType: "image/jpeg" });
     expect(blocked.status).toBe(429);
     expect(blocked.body.code).toBe("DAILY_LIMIT_REACHED");
+  });
+
+  it("production without Redis fails closed (503, no unlimited serve)", async () => {
+    // Simulate production with no Redis creds: expensive endpoint must 503,
+    // not serve via memory. No live AI calls (fails before provider).
+    __resetRateLimitStoreForTests();
+    const prevUpUrl = process.env.UPSTASH_REDIS_REST_URL;
+    const prevUpTok = process.env.UPSTASH_REDIS_REST_TOKEN;
+    const prevKvUrl = process.env.KV_REST_API_URL;
+    const prevKvTok = process.env.KV_REST_API_TOKEN;
+    const prevNode = process.env.NODE_ENV;
+    const prevMock = process.env.MOCK_MODE;
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    delete process.env.KV_REST_API_URL;
+    delete process.env.KV_REST_API_TOKEN;
+    process.env.NODE_ENV = "production";
+    process.env.MOCK_MODE = "true";
+    clearAllCaches();
+    try {
+      const { app } = await import("./app.js");
+      const res = await request(app)
+        .post("/api/fridge/analyze")
+        .set("Content-Type", "application/json")
+        .set(DEVICE_HEADER, VALID_UUID)
+        .set("x-real-ip", "203.0.113.99")
+        .send({ imageBase64: makeImageBytes(4242), mimeType: "image/jpeg" });
+      expect(res.status).toBe(503);
+      expect(res.body.code).toBe("RATE_LIMIT_UNAVAILABLE");
+    } finally {
+      if (prevUpUrl !== undefined) process.env.UPSTASH_REDIS_REST_URL = prevUpUrl;
+      if (prevUpTok !== undefined) process.env.UPSTASH_REDIS_REST_TOKEN = prevUpTok;
+      if (prevKvUrl !== undefined) process.env.KV_REST_API_URL = prevKvUrl;
+      if (prevKvTok !== undefined) process.env.KV_REST_API_TOKEN = prevKvTok;
+      if (prevNode !== undefined) process.env.NODE_ENV = prevNode;
+      else delete process.env.NODE_ENV;
+      if (prevMock !== undefined) process.env.MOCK_MODE = prevMock;
+      else delete process.env.MOCK_MODE;
+      __resetRateLimitStoreForTests();
+      __setRateLimitStoreForTests(new MemoryRateLimitStore());
+      clearAllCaches();
+    }
   });
 });

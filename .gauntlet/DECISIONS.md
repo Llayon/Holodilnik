@@ -191,3 +191,45 @@
 - **Decision:** Add `server/imageQualityRegression.test.ts` (5 tests, Node sharp synthetic SVG fridge, 1440 q84 → ≤200KB realistic, not high-frequency noise) and extend `src/lib/imageCompression.test.ts` (helpers, calculateSize, HEIC, bounded Qualities) and `server/productionImagePolicy.test.ts` (17 tests). Total 128 unit tests (was 78) + 12 e2e all green. E2E now uses valid JPEG and waits for `photo-step` with timeout handling preparing. `vercel.json` + `vercel project add` + `vercel env add` for `GEMINI/GROQ/ZAI` (sensitive, all envs) + deployment protection check (Preview SSO protected, Production public on Hobby — password requires Pro 428).
 - **Context:** Spec §18-19 requires deterministic tests for all policy points without live AI calls; quality regression demonstrates 130–150KB target realistic.
 - **Consequence:** Gates `format:check`, `lint`, `typecheck`, `test`, `build`, `test:e2e` all pass; deployment `holodilnik-seven.vercel.app` verified live (health 200, cache 404, provider 404, 130KB image → 200, 400KB → 413, CORS null, no secret in bundle).
+
+## ADR-033: Production vision routing ZAI primary → Groq fallback (no Gemini anon)
+
+- **Decision:** Change anonymous production vision chain from `Gemini → Groq` to `ZAI (glm-4.6v-flash) → Groq (qwen/qwen3.8-27b)`. Gemini removed from ordinary anonymous fallback; kept for dev/benchmark (`?provider=gemini` dev-only, 404 in prod) and future authenticated routing. Single source of truth `VISION_PRIMARY=zai` / `VISION_FALLBACK=groq` in `server/config.ts` (env-overridable).
+- **Context:** Gemini free quota (20/day) too scarce for public prototype; prior gauntlet showed GLM best accuracy when available but transient 1305 overload. Fast Groq fallback preserves quota and latency.
+- **Consequence:** `VisionProviderChain` constructs ZAI→Groq when keys exist; prod health minimal `provider:zai, modelId:glm-4.6v-flash`; tests prove Gemini never called in anon chain.
+
+## ADR-034: ZAI short timeout + single-immediate-retry policy (no long chain)
+
+- **Decision:** `ZAI_TIMEOUT_MS=10000` via `AbortController` in `ZaiVisionProvider` (configurable, testable). Only immediate retry is `1214/response_format` fallback (no delay). No 2s→5s→8s chain in user path; router falls back to Groq immediately on 429/1302/1303/1304/1305/1308/1113/5xx/timeout/network/malformed. One call per provider max, no loops.
+- **Context:** Prior gauntlet backoff kept in benchmark harness only; production prioritizes latency.
+- **Consequence:** `isVisionFallbackableZaiError()` covers ZAI codes + timeout/abort + malformed, but NOT 401 auth.
+
+## ADR-035: Recipe Gemini fallback gated by ENABLE_GEMINI_PRODUCTION_FALLBACK
+
+- **Decision:** Recipes stay Groq primary, but Gemini fallback in public production defaults OFF (`ENABLE_GEMINI_PRODUCTION_FALLBACK=false` → Groq-only prod). Dev always allows Groq→Gemini.
+- **Context:** Avoid silently burning scarce Gemini quota the vision change preserves.
+- **Consequence:** Prod recipes Groq-only unless flag true. Documented in health and STATE.
+
+## ADR-036: Anonymous two-layer rate limiting (device + IP, hashed, daily UTC bucket)
+
+- **Decision:** `server/rateLimit.ts` with `RateLimitStore` (`Memory` dev/tests, `UpstashRedis` prod REST). Limits: vision 5/device/day + 20/IP/day; recipes 20/device/day + 50/IP/day (central `config`). Keys `rate:<kind>:<ip|device>:<sha256>:YYYY-MM-DD`, TTL to next UTC midnight +1h. Validation before counters; cached hits bypass; increment only after success; 429 `DAILY_LIMIT_REACHED` Russian message.
+- **Context:** Public Hobby needs abuse protection without accounts. Memory unreliable across Fluid instances → durable Redis checkpoint B.
+- **Consequence:** Both expensive endpoints enforce limits; logs rid/provider/fallback/latency/cached without sensitive data.
+
+## ADR-037: Upstash Redis REST as durable store (no new dep, KV-compatible)
+
+- **Decision:** Plain `fetch` to Upstash REST (`UPSTASH_REDIS_REST_URL/TOKEN`, fallback `KV_REST_API_URL/TOKEN`). No `@upstash/redis` dep, no Supabase. `INCR` + `EXPIRE` on first creation (fixed-day window).
+- **Context:** Verified Sept 2026 docs; free tier fits counters-only workload; manual setup → checkpoint B.
+- **Consequence:** `getRateLimitStore()` durable when creds exist, memory + loud WARNING otherwise.
+
+## ADR-038: Vercel client IP source (x-real-ip canonical)
+
+- **Decision:** `getClientIp()` trusts `x-real-ip` first (Vercel-calculated, spoof-safe), then `x-forwarded-for[0]`, `x-vercel-forwarded-for`, socket. Device limit works when IP missing.
+- **Context:** Spec forbids blind XFF trust. Documented source + fallback.
+- **Consequence:** Stable keys; no raw IP logging.
+
+## ADR-039: Anonymous device ID (random UUID, no fingerprinting)
+
+- **Decision:** Frontend `src/lib/deviceId.ts` (`crypto.randomUUID()`, `localStorage:holodilnik_device_id`, header `X-Holodilnik-Device-Id`). Server allows ASCII 8–128, ignores malformed. No canvas/hardware/ad IDs.
+- **Context:** Lightweight prototype identifier, not credits. 5/day device vs 20/day IP.
+- **Consequence:** Normal tester several tries; single-browser abuser capped. No balance UI.

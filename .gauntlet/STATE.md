@@ -1,6 +1,174 @@
 # STATE.md — Holodilnik Checkpoint
 
-## Current Checkpoint: VERCEL PRODUCTION READINESS + EPHEMERAL IMAGE PASS — DEPLOYED
+## Current Checkpoint: PRODUCTION ROUTING SWITCH (ZAI PRIMARY) + PUBLIC ABUSE PROTECTION — RATE LIMIT STORAGE CHECKPOINT READY (NOT YET DEPLOYED)
+
+**Date:** 2026-09-17
+**Branch:** master (local commits, NOT pushed — waiting for Redis creds before prod deploy)
+**Starting HEAD before pass:** 0e30eb4002399dc65ce6497717bf48bac1791763 (chore: document vercel deployment)
+**Ending HEAD:** (see `git log` after local commits below; push deferred per §24/§28)
+**Production URL (unchanged, still old routing until deploy):** https://holodilnik-seven.vercel.app
+
+### Stop condition reached: B. RATE LIMIT STORAGE CHECKPOINT READY
+
+Code for ZAI-primary routing + anonymous rate limits is implemented and all
+quality gates pass locally. Production deploy is ON HOLD waiting for durable
+rate-limit storage credentials (Upstash Redis REST). Pushing to master now
+would auto-deploy to public production with an ephemeral in-memory limiter
+(unreliable across Vercel Fluid instances), so push/deploy is deferred until
+the user completes the 5-minute Upstash setup below.
+
+### RATE LIMIT STORAGE CHECKPOINT READY — exact setup instructions
+
+**Provider selected:** Upstash Redis via REST (no new SDK dependency; plain
+`fetch` to `UPSTASH_REDIS_REST_URL` with `Bearer UPSTASH_REDIS_REST_TOKEN`).
+
+**Why Upstash Redis (Sept 2026):**
+
+- Vercel KV is Upstash-backed; the `@upstash/redis` SDK reads
+  `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` (or `KV_REST_API_URL`/
+  `KV_REST_API_TOKEN` from the Vercel KV integration). Verified via current
+  Upstash docs (`Redis.fromEnv()` reads both pairs, UPSTASH_* wins).
+- Serverless-safe: REST, no persistent TCP, works in Vercel Fluid functions.
+- Free tier sufficient: prototype stores only tiny counters
+  (`rate:vision:ip:<sha256>:YYYY-MM-DD` etc., ~50 bytes each, TTL ~24-48h).
+  Even 1k users × few keys/day is far below free limits (256MB, 500k cmds/mo
+  typical free tier; exact quota shown in Upstash console at creation).
+- No Supabase, no new DB, smallest reliable option.
+
+**Where to create the store (2 options, either works):**
+
+1. Upstash Console (recommended, explicit): https://console.upstash.com
+   → Create Database → Regional (choose `eu-west-1` or closest to Vercel
+   `iad1`; latency ~50-150ms acceptable for rate-limit checks) → copy REST URL
+   - REST Token from Details/REST API section.
+2. Vercel Dashboard → Storage → Create → Upstash Redis/KV → connect to
+   `holodilnik` project → variables auto-injected as `KV_REST_API_URL`/
+   `KV_REST_API_TOKEN` (our code reads those as fallback, no rename needed).
+
+**Exact variable names to add in Vercel (Production + Preview):**
+
+```
+UPSTASH_REDIS_REST_URL=https://<your-db>.upstash.io
+UPSTASH_REDIS_REST_TOKEN=<your-token>
+```
+
+(or keep `KV_REST_API_URL`/`KV_REST_API_TOKEN` if created via Vercel
+integration — no code change needed; `Redis.fromEnv()`-compatible).
+
+**How to add (CLI, from repo root, no secrets in chat):**
+
+```
+npx vercel env add UPSTASH_REDIS_REST_URL production
+npx vercel env add UPSTASH_REDIS_REST_TOKEN production
+npx vercel env add UPSTASH_REDIS_REST_URL preview
+npx vercel env add UPSTASH_REDIS_REST_TOKEN preview
+```
+
+(Paste values only into the CLI prompt; never into chat. Select
+Sensitive. Then `npx vercel --prod` redeploy so the function picks them up.)
+
+**How we verify after you confirm:**
+
+- `curl /api/health` → prod minimal `{status,mockMode,provider:zai,modelId:glm-4.6v-flash}`
+- ONE real fridge photo → 200, `meta.provider=zai` (or `groq` on ZAI overload)
+- 6th same-device scan → 429 `DAILY_LIMIT_REACHED` (Russian message)
+- Server log shows `[rateLimit]` using `upstash-redis` (durable), not the
+  `WARNING: no UPSTASH... using ephemeral memory` line.
+
+**What happens today without Redis:** `getRateLimitStore()` returns
+`MemoryRateLimitStore` + logs a loud production WARNING. Tests/dev always use
+memory (correct). We do NOT pretend memory is reliable across Vercel
+instances — hence this checkpoint.
+
+### Production vision policy (implemented, not yet deployed)
+
+- PRIMARY: Z.AI `glm-4.6v-flash` (`VISION_PRIMARY=zai`)
+- FALLBACK: Groq `qwen/qwen3.8-27b` (`VISION_FALLBACK=groq`)
+- Gemini is NOT in the anonymous production chain. Kept for dev/benchmark
+  (`?provider=gemini` in dev only, still blocked 404 in prod) and future
+  authenticated routing.
+- Flow: GLM attempt → success return; on 429/1302/1303/1304/1305/1308/1113/
+  5xx/timeout/network/malformed → Groq once; Groq failure → controlled app
+  error (never silent Gemini).
+- ZAI timeout: `ZAI_TIMEOUT_MS=10000` (AbortController, 8–12s intent).
+  Only immediate `1214/response_format` single retry inside ZAI provider
+  (no 2s→5s→8s chain). Router has no loops (1 call per provider max).
+- Recipes: Groq primary → Gemini fallback GATED by
+  `ENABLE_GEMINI_PRODUCTION_FALLBACK` (default false = Groq-only in public
+  prod to preserve Gemini quota; true re-enables fallback; dev always allows
+  fallback). Current prod behavior after deploy: Groq-only recipes.
+- Health: prod minimal `{provider:zai, modelId:glm-4.6v-flash}`; dev full
+  diagnostics show `vision:{primary:zai,fallback:groq}`,
+  `recipes:{primary:groq,fallback:undefined|gemini}`.
+- Cache: identical image/provider/model/prompt hit returns WITHOUT consuming
+  scan allowance (documented). No images stored (only SHA-256 → result).
+- Observability: per-request `rid`, attempted/succeeded provider, fallback
+  bool, latency, error class, cached flag. No base64/IP/device/keys logged.
+
+### Rate limits (implemented)
+
+- Vision: 5/device/day, 20/IP/day. Recipes: 20/device/day, 50/IP/day.
+  (Env-overridable `VISION_DEVICE_DAILY_LIMIT` etc.; single source `config`.)
+- Device ID: `crypto.randomUUID()` in `localStorage:holodilnik_device_id`,
+  sent as `X-Holodilnik-Device-Id`. No fingerprinting. Server validates
+  ASCII 8–128 `[A-Za-z0-9_-:]`, ignores malformed.
+- Client IP: `x-real-ip` first (Vercel canonical, spoof-safe — platform
+  overwrites XFF), then `x-forwarded-for[0]`, then `x-vercel-forwarded-for`,
+  then socket. Normalized (trim/lower, strip port/brackets/zone).
+- Keys (hashed, TTL to next UTC midnight +1h):
+  `rate:vision:ip:<sha256>:YYYY-MM-DD` etc. Raw IP/device never persisted.
+- Semantics: validation (payload/size/mime) BEFORE counters; invalid/
+  oversized/cached do NOT consume; provider exceptions do NOT consume
+  (increment only after successful provider response, incl. 422-empty which
+  still used quota). Sequential check-then-increment has small concurrent
+  overshoot window (documented prototype tradeoff).
+- UX: 429 `{code:DAILY_LIMIT_REACHED, error:"На сегодня лимит тестовых..."}`
+  → frontend shows "На сегодня тестовый лимит закончился. Попробуйте снова
+  завтра." No quota/infra details. No balance UI.
+
+### Quality gates (this pass, local)
+
+```
+npm run format:check ✓
+npm run lint        ✓ (0 errors, 6 pre-existing warnings in vision-gauntlet.ts)
+npm run typecheck   ✓
+npm run test        ✓ 163/163 (was 128; +14 productionRouting, +18 rateLimit, +3 deviceId)
+npm run build       ✓ (246KB JS)
+npm run test:e2e    ✓ 12/12 (MOCK_MODE=true, system Chrome)
+```
+
+No test makes live Gemini/Groq/ZAI calls (rateLimit API tests force
+`MOCK_MODE=true` + instant `MockVisionProvider` spy; routing tests use
+injected fakes; `productionRouting` uses `node` env to avoid Groq browser
+guard).
+
+### Commits in this pass (local, not pushed)
+
+- feat: make GLM primary vision provider (ZAI->Groq, no Gemini anon)
+- fix: ZAI short timeout + fast fallback, no long retry chain
+- feat: add anonymous production rate limits (Redis/memory store, hashed keys)
+- feat: add anonymous device id (client + header validation)
+- test: cover production routing and abuse limits
+- (docs commits for STATE/DECISIONS/FAILURES)
+
+### Live smoke (deferred until Redis + deploy)
+
+Per §25, no gauntlet rerun and no quota burn in this pass. After user adds
+Redis vars: deploy Preview → verify → deploy production → ONE real fridge
+photo smoke (`meta.provider` observed) + mock-based fallback evidence from
+tests above. No images persisted.
+
+### For Next Agent (after Redis ready)
+
+1. Confirm `npx vercel env ls` shows UPSTASH_* (Production+Preview).
+2. `git push origin master` (or merge), `npx vercel --prod`, verify health +
+   ONE photo smoke, 6th-device 429, then update STATE with ending HEAD +
+   deployment URL + smoke result.
+3. Do NOT begin Auth/Supabase/credits.
+
+---
+
+## Previous Checkpoint: VERCEL PRODUCTION READINESS + EPHEMERAL IMAGE PASS — DEPLOYED
 
 **Date:** 2026-09-16
 **Branch / Commit:** master at 4a0e52a -> vercel rewrites + ephemeral image policy (see git log)

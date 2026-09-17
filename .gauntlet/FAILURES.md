@@ -153,6 +153,19 @@
 - **Cause:** High-frequency random noise is worst-case for JPEG (incompressible), not representative of real fridge photos (which compress to 130–150KB at 1086×1448 q80). Synthetic with noise bloats.
 - **Fix:** Replaced synthetic with SVG fridge overlay (rectangles + text) via `sharp` SVG composite — realistic compressible content, same dimensions → 4000×3000 now 701ms, all 5 tests pass (1086×1448 ≤200KB, 800×600 not upscaled, metadata stripped).
 
+## F-027: Unit tests made live ZAI/Groq calls after switching default chain to ZAI
+
+- **Symptom:** After changing `VisionProviderChain` to ZAI→Groq, `npm run test` burned real quota (`429 code 1302`, `400 code 1210`, `invalid image data` from live APIs) and 6 API tests + 1 image-policy test timed out at 5000ms. `.env.local` contains real keys, so `isMockMode()` was false and dummy `Buffer.alloc` images hit live providers (2 calls per request: ZAI then Groq fallback).
+- **Cause:** Tests assumed mock but never forced it: `productionImagePolicy` set `process.env.MOCK_MODE` after `config.mockMode` was already cached at import; new `rateLimit.test.ts` API tests had no mock forcing and used real 800ms+live latency (20 requests × ~1.5s = 30s).
+- **Fix:** (1) `isMockMode()` now also checks `process.env.MOCK_MODE === "true"` dynamically (not only cached `config.mockMode`). (2) `rateLimit.test.ts` forces `MOCK_MODE=true` + spies `MockVisionProvider.prototype.analyzeFridgeImage` for instant mock (cache logic intact). (3) `productionRouting.test.ts` uses `/** @vitest-environment node */` to avoid Groq SDK browser guard in jsdom. Now 163/163 pass with zero live calls (verified: no `[zaiVision]/[groqVision]` live lines in mocked suites except unit provider tests with mocked fetch).
+- **Rule:** No normal test command may make live Gemini/Groq/ZAI requests. All API integration tests must force mock + instant provider.
+
+## F-028: Groq SDK browser guard in jsdom unit tests
+
+- **Symptom:** `new Groq()` threw `It looks like you're running in a browser-like environment... dangerouslyAllowBrowser` in `productionRouting.test.ts` when constructing real chains with fake keys under default jsdom env.
+- **Cause:** Vitest default `environment: jsdom` provides `window/document`, triggering Groq's browser check. Existing `productionImagePolicy.test.ts` already used `/** @vitest-environment node */`.
+- **Fix:** Added node env header to `productionRouting.test.ts`. Real-chain construction tests now pass in Node.
+
 ## Next Watch
 
 - If live Gemini returns `NO_FOOD_DETECTED` too often, tune vision prompt confidence threshold or add `mediaResolution` param.

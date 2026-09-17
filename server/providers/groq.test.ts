@@ -336,3 +336,75 @@ describe("GroqRecipeProvider", () => {
     expect(first?.requiredIngredients[0].displayName).not.toContain("_");
   });
 });
+
+describe("Groq output-token budgets (vision decoupled from recipes)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("vision sends the conservative vision-specific budget (<=1000)", async () => {
+    const { GROQ_VISION_MAX_COMPLETION_TOKENS } = await import("../config.js");
+    expect(GROQ_VISION_MAX_COMPLETION_TOKENS).toBe(800);
+    const provider = new GroqVisionProvider("test-key");
+    const createMock = vi
+      .fn()
+      .mockResolvedValue(mockVisionResponse({ ingredients: [], uncertainItems: [] }));
+    setVisionMock(provider, createMock);
+    await provider.analyzeFridgeImage({ imageBase64: "aaaa", mimeType: "image/jpeg" });
+    expect(createMock).toHaveBeenCalledTimes(1);
+    const args = createMock.mock.calls[0][0] as { max_completion_tokens: number };
+    expect(args.max_completion_tokens).toBe(GROQ_VISION_MAX_COMPLETION_TOKENS);
+    expect(args.max_completion_tokens).toBeLessThanOrEqual(1000);
+  });
+
+  it("recipe provider retains its existing 2500 budget", async () => {
+    const provider = new GroqRecipeProvider("test-key");
+    const createMock = vi.fn().mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              recipes: [
+                {
+                  id: "r1",
+                  title: "Омлет быстрый",
+                  estimatedMinutes: 10,
+                  difficulty: "easy",
+                  slot: "fastest",
+                  requiredIngredients: [{ canonicalName: "egg", displayName: "Яйца" }],
+                  steps: ["Шаг 1 делается", "Шаг 2 делается"],
+                  reason: "быстрое блюдо на завтрак",
+                },
+                {
+                  id: "r2",
+                  title: "Ужин обычный",
+                  estimatedMinutes: 20,
+                  difficulty: "medium",
+                  slot: "normal",
+                  requiredIngredients: [{ canonicalName: "egg", displayName: "Яйца" }],
+                  steps: ["Шаг 1 делается", "Шаг 2 делается"],
+                  reason: "нормальный ужин для семьи",
+                },
+                {
+                  id: "r3",
+                  title: "Из того что есть",
+                  estimatedMinutes: 30,
+                  difficulty: "medium",
+                  slot: "from_what_exists",
+                  requiredIngredients: [{ canonicalName: "egg", displayName: "Яйца" }],
+                  steps: ["Шаг 1 делается", "Шаг 2 делается"],
+                  reason: "максимум из имеющихся продуктов",
+                },
+              ],
+            }),
+          },
+        },
+      ],
+    });
+    setRecipeMock(provider, createMock);
+    await provider.generateRecommendations({
+      ingredients: [{ canonicalName: "egg", displayName: "Яйца" }],
+    });
+    expect(createMock).toHaveBeenCalledTimes(1);
+    const args = createMock.mock.calls[0][0] as { max_completion_tokens: number };
+    expect(args.max_completion_tokens).toBe(2500);
+  });
+});

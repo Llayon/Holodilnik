@@ -3,7 +3,12 @@ import type { VisionProvider } from "./types.js";
 import type { FridgeAnalysisResult } from "../../shared/types.js";
 import { fridgeAnalysisSchema } from "../../shared/schemas.js";
 import { normalizeIngredient } from "../../shared/normalization.js";
-import { config, GROQ_MODEL_ID, VISION_PROMPT_VERSION } from "../config.js";
+import {
+  config,
+  GROQ_MODEL_ID,
+  GROQ_VISION_MAX_COMPLETION_TOKENS,
+  VISION_PROMPT_VERSION,
+} from "../config.js";
 
 const VISION_PROMPT = `
 Ты — эксперт по распознаванию продуктов в холодильнике по фото.
@@ -157,7 +162,7 @@ export class GroqVisionProvider implements VisionProvider {
               },
             },
         temperature: 0.2,
-        max_completion_tokens: 2000,
+        max_completion_tokens: GROQ_VISION_MAX_COMPLETION_TOKENS,
       });
     };
 

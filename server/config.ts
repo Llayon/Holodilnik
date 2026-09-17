@@ -5,6 +5,10 @@ dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
 dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 
 export const GROQ_MODEL_ID = "qwen/qwen3.8-27b" as const;
+// Groq vision output budget: small structured JSON only. Kept conservative
+// (<=1000) because the Groq on_demand tier rejected 2000 OTPM in prod smoke
+// (2026-09-17). Recipe budget (2500) is separate and unchanged.
+export const GROQ_VISION_MAX_COMPLETION_TOKENS = 800 as const;
 export const GEMINI_MODEL_ID = "gemini-3.8-flash" as const;
 export const ZAI_MODEL_ID = "glm-4.6v-flash" as const;
 export const ZAI_API_BASE = "https://api.z.ai/api/paas/v4" as const;

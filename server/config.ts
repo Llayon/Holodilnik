@@ -60,7 +60,24 @@ export const config = {
   visionIpDailyLimit: parsePositiveInt(process.env.VISION_IP_DAILY_LIMIT, 20),
   recipeDeviceDailyLimit: parsePositiveInt(process.env.RECIPE_DEVICE_DAILY_LIMIT, 20),
   recipeIpDailyLimit: parsePositiveInt(process.env.RECIPE_IP_DAILY_LIMIT, 50),
+  // UserPlatform integration (Gauntlet 2). Missing flag means false (legacy mode).
+  platformIntegrationEnabled: process.env.PLATFORM_INTEGRATION_ENABLED === "true",
+  userPlatformUrl: process.env.USER_PLATFORM_URL ?? "https://user-platform-phi.vercel.app",
+  userPlatformServiceToken: process.env.USER_PLATFORM_SERVICE_TOKEN ?? "",
+  platformSessionCookieName: process.env.PLATFORM_SESSION_COOKIE_NAME ?? "holodilnik_session",
+  // Authenticated abuse caps (credits remain the business entitlement).
+  authVisionUserDailyLimit: parsePositiveInt(process.env.AUTH_VISION_USER_DAILY_LIMIT, 30),
+  authVisionIpDailyLimit: parsePositiveInt(process.env.AUTH_VISION_IP_DAILY_LIMIT, 200),
 };
+
+export function isProduction(): boolean {
+  return process.env.NODE_ENV === "production";
+}
+
+/** Live env read (not the load-time snapshot): tests toggle the flag per-test. */
+export function isPlatformIntegrationEnabled(): boolean {
+  return process.env.PLATFORM_INTEGRATION_ENABLED === "true";
+}
 
 function isValidKey(key: string): boolean {
   if (!key) return false;

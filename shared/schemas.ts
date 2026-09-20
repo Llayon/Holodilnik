@@ -58,6 +58,9 @@ export const analyzeRequestSchema = z.object({
     .min(10)
     .describe("Base64 image data (without data: prefix) or with prefix"),
   mimeType: z.string().optional().default("image/jpeg"),
+  // Client idempotency key (Gauntlet 2): one UUID per deliberate scan action.
+  // Authenticated scans require it; anonymous callers may omit it.
+  requestId: z.string().uuid().optional(),
 });
 
 export const recommendationsRequestSchema = z.object({

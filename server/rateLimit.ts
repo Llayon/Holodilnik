@@ -336,3 +336,60 @@ export function limitExceededResponse() {
     body: { error: DAILY_LIMIT_MESSAGE, code: "DAILY_LIMIT_REACHED" as const },
   };
 }
+
+// ---------- authenticated abuse caps (Gauntlet 2, ADR-046) ----------
+//
+// Separate key namespace from anonymous limits: an authenticated credit
+// holder must never be capped by the anonymous 5/day device entitlement.
+// Credits remain the business entitlement; these caps are abuse protection
+// only (generous defaults). Same hashed-key privacy conventions: the raw
+// Platform user UUID never hits the store, only its SHA-256.
+
+export function authVisionUserKey(userIdHash: string, bucket: string): string {
+  return `rate:auth:vision:user:${userIdHash}:${bucket}`;
+}
+
+export function authVisionIpKey(ipHash: string, bucket: string): string {
+  return `rate:auth:vision:ip:${ipHash}:${bucket}`;
+}
+
+export function hashPlatformUser(userId: string): string {
+  return sha256Hex(`platform-user:${userId}`);
+}
+
+export async function checkAuthVisionLimits(opts: {
+  userId: string;
+  ip?: string;
+  bucket?: string;
+}): Promise<LimitCheck> {
+  const store = getRateLimitStore();
+  const bucket = opts.bucket ?? getDailyBucket();
+  const userCount = await store.get(authVisionUserKey(hashPlatformUser(opts.userId), bucket));
+  if (userCount >= config.authVisionUserDailyLimit) {
+    return { allowed: false, reason: "device", deviceCount: userCount };
+  }
+  let ipCount: number | undefined;
+  if (opts.ip) {
+    ipCount = await store.get(authVisionIpKey(hashIp(opts.ip), bucket));
+    if (ipCount >= config.authVisionIpDailyLimit) {
+      return { allowed: false, reason: "ip", deviceCount: userCount, ipCount };
+    }
+  }
+  return { allowed: true, deviceCount: userCount, ipCount };
+}
+
+export async function recordAuthVisionUsage(opts: {
+  userId: string;
+  ip?: string;
+  bucket?: string;
+  ttlSeconds?: number;
+}): Promise<void> {
+  const store = getRateLimitStore();
+  const bucket = opts.bucket ?? getDailyBucket();
+  const ttl = opts.ttlSeconds ?? ttlUntilEndOfDaySeconds();
+  const jobs: Array<Promise<number>> = [
+    store.incr(authVisionUserKey(hashPlatformUser(opts.userId), bucket), ttl),
+  ];
+  if (opts.ip) jobs.push(store.incr(authVisionIpKey(hashIp(opts.ip), bucket), ttl));
+  await Promise.all(jobs);
+}

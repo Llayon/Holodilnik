@@ -6,8 +6,11 @@ import {
   isGeminiAvailable,
   isGroqAvailable,
   isZaiAvailable,
+  isPlatformIntegrationEnabled,
 } from "../config.js";
 import { analyzeRequestSchema } from "../../shared/schemas.js";
+import { requestPlatformSession } from "./platform.js";
+import { handleAuthenticatedScan } from "./fridgeAuth.js";
 import { VisionProviderChain } from "../providers/router.js";
 import { ZaiVisionProvider } from "../providers/zaiVision.js";
 import { GeminiVisionProvider } from "../providers/geminiVision.js";
@@ -162,6 +165,21 @@ router.post("/analyze", async (req, res) => {
           cached: false,
           requestedProvider,
         },
+      });
+    }
+
+    // Authenticated scans (Gauntlet 2): a present Platform cookie means the
+    // caller opted into the credit flow — fail closed on session errors,
+    // never silently downgrade to the anonymous path (credit bypass).
+    // No cookie → legacy anonymous prototype flow (web by design).
+    if (isPlatformIntegrationEnabled() && requestPlatformSession(req)) {
+      providerAttempted = "platform";
+      return handleAuthenticatedScan(req, res, {
+        base64Part,
+        effectiveMime,
+        clientRequestId: parsed.data.requestId,
+        requestLogId: requestId,
+        startedAt,
       });
     }
 

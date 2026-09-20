@@ -245,3 +245,39 @@
 - **Decision:** `GROQ_VISION_MAX_COMPLETION_TOKENS = 800` in `server/config.ts`, used only by `GroqVisionProvider`. Recipe provider keeps its existing separate `max_completion_tokens: 2500` literal. Vision payload is small structured JSON; 2000 caused Groq on_demand OTPM 429 in prod smoke (limit 1000, asked 2000).
 - **Context:** Follow-up to the one-smoke 429 blocker. Budgets were already separate literals (verified decoupled, not shared config) — this pass only lowers vision.
 - **Consequence:** Prod smoke with 800 tokens → Groq fallback 200, 7 ingredients. Unit tests pin vision=800 (≤1000) and recipe=2500.
+
+## ADR-042: UserPlatform integration — minimal local HTTP adapter (strategy D)
+
+- **Decision:** Holodilnik consumes UserPlatform through a small typed adapter in `server/platform/` speaking the stable HTTP contract directly (exchange, reserve/commit/release, me) with its own minimal types. No npm dependency on `@user-platform/*` (packages are private/unpublished), no filesystem imports of the UserPlatform repo in production code (Vercel build must be self-contained; the sibling path may assist local dev inspection only).
+- **Context:** Gauntlet section 10 options A–D. A requires publishing private packages (out of scope); B/C add sync fragility. The HTTP contract is versioned by UserPlatform Gauntlet 1 (`ServicePlatformExchangeResult`, credit error codes) and covered by Holodilnik-side mock + contract tests.
+- **Consequence:** `server/platform/client.ts` (fetch-based, server-only), `types.ts` (minimal mirrors), `errors.ts` (typed PlatformError). Contract drift is caught by mock-parity tests, not by shared package versions.
+
+## ADR-043: Platform session cookie (first-party, opaque)
+
+- **Decision:** Holodilnik stores the UserPlatform app-session token in its own first-party cookie `holodilnik_session` (HttpOnly, Secure in production, SameSite=Lax, Path=/). The same-origin backend reads it and forwards the raw token server-to-server; browser JS never sees it. Logout (`DELETE /api/platform/session`) revokes server-side via UserPlatform when reachable, then clears the cookie regardless.
+- **Context:** Cross-origin cookies cannot be shared (UserPlatform ADR-013); Lax suffices because the browser talks to Holodilnik's own origin.
+- **Consequence:** `server/platform/cookies.ts` owns cookie parse/serialize; no `cookie-parser` dependency.
+
+## ADR-044: Client-generated idempotency keys (`fridge.scan:<uuid>`)
+
+- **Decision:** Frontend creates one `crypto.randomUUID()` per deliberate scan action and sends it as `requestId`; backend maps to Platform `requestId = fridge.scan:<uuid>` (48 chars, fits UserPlatform `[A-Za-z0-9_:\-.]{8,128}`). Same-action retries reuse the UUID (no extra charge); a new click mints a new UUID (new charge). The server never invents the billing key.
+- **Context:** The current server `requestId` is an 8-char log prefix — insufficient for billing idempotency.
+- **Consequence:** `analyzeRequestSchema` gains optional `requestId` (uuid); a settlement cache keyed by Platform requestId enables commit-timeout replay without AI rerun or double charge.
+
+## ADR-045: Authenticated scans always reserve first; cache never makes a new action free
+
+- **Decision:** Authenticated pipeline order: validate, then session, then requestId, then abuse check, then reserve, then cache/AI, then commit (usable result including confident NO_FOOD) or release (technical failure). A new `requestId` on an already-cached image still reserves 1 credit (AI call skipped via cache); a same-`requestId` retry reuses the cached/settlement result with idempotent commit (no extra charge, no AI rerun). Anonymous mode keeps current cache-before-counter semantics.
+- **Context:** Credits price product usage, not provider cost (Gauntlet section 23). NO_FOOD_DETECTED from a successful analysis is a completed scan (consistent with current anonymous policy where empty-but-valid consumes allowance).
+- **Consequence:** Vision cache stays shared; a settlement cache (`platformRequestId → result`, bounded 200, memory) covers commit-timeout replay.
+
+## ADR-046: Dual rate-limit policy (anonymous entitlement vs authenticated abuse cap)
+
+- **Decision:** Anonymous web keeps 5/device + 20/IP vision limits. Authenticated TG/MAX users get separate abuse caps (`AUTH_VISION_USER_DAILY_LIMIT=30`, `AUTH_VISION_IP_DAILY_LIMIT=200`, keyed by SHA-256 of the internal user UUID plus the existing IP layer); credits remain the business entitlement. Recipes keep existing limits in both modes (no credit involvement). Redis fail-closed behavior is unchanged in production.
+- **Context:** The old anonymous device limit (5/day) must not cap a 10-credit authenticated user at scan #6 (Gauntlet section 26).
+- **Consequence:** `checkAuthVisionLimits()` alongside `checkLimits()`; same hashed-key privacy conventions.
+
+## ADR-047: Platform outage fails closed (no anonymous fallback for TG/MAX)
+
+- **Decision:** When integration is enabled and a TG/MAX client presents initData but UserPlatform is unreachable or failing, the backend returns 503 `PLATFORM_UNAVAILABLE` ("Сервис аккаунта временно недоступен") with retry — never silent anonymous AI. `PLATFORM_INTEGRATION_ENABLED=false` (default, including missing env) is the operator rollback; ordinary web stays anonymous by design.
+- **Context:** Automatic fallback would let anyone bypass credits by blocking one fetch.
+- **Consequence:** Frontend `auth-error` state with retry; `/api/platform/*` never downgrades identity.

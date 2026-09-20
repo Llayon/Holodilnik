@@ -1,6 +1,48 @@
 # STATE.md — Holodilnik Checkpoint
 
-## Current Checkpoint: GROQ VISION FALLBACK FIX (800 TOKENS) — DEPLOYED + SMOKE 200 VIA GROQ
+## Current Checkpoint: USERPLATFORM INTEGRATION (Gauntlet 2) — IN PROGRESS
+
+**Date:** 2026-09-20
+**Branch:** master (starting HEAD `acdae9f`, clean)
+**UserPlatform:** `D:\Programms\Max\UserPlatform` at `18f37a5` (Service Bridge READY, reference only)
+**Production URL:** https://holodilnik-seven.vercel.app (legacy anonymous flow, unchanged)
+
+### Phase 0 (discovery, done)
+
+- Mapped: fridge analyze pipeline (validate → cache → rate-limit → chain → record),
+  recipe pipeline, Redis stores, vision cache (hash-only), frontend boot (no host
+  adapter yet — single `api.ts` client, deviceId header, no initData handling).
+- Architecture: ADR-042 (local typed adapter, strategy D) .. ADR-047 (fail-closed
+  outage); critic H-01..H-05 in `.gauntlet/CRITIC.md` (new file).
+- Decisions: client UUID `requestId` → `fridge.scan:<uuid>`; reserve-before-cache
+  for authenticated scans; NO_FOOD = paid completed scan; dual rate limits
+  (anon 5/20, auth user 30 / IP 200); recipes credit-free; no anonymous fallback.
+- Flag: `PLATFORM_INTEGRATION_ENABLED` default false (rollback path).
+
+### Phases 1–6 (implemented, all gates green, unpushed)
+
+- **Adapter** (`server/platform/`): typed real client (service exchange, me,
+  reserve/commit/release, revoke), deterministic mock (stable identities,
+  idempotency parity, timeout knobs), cookie helpers, settlement cache +
+  in-flight dedupe, live-flag helper `isPlatformIntegrationEnabled()`.
+- **Auth bridge**: `POST /api/platform/exchange` (Holodilnik cookie, safe JSON),
+  `GET /api/platform/me`, `DELETE /api/platform/session` (best-effort revoke),
+  dev-only persona exchange + mock reset; frontend `host.ts` (single bridge
+  boundary) + `platform.ts` + boot states (booting/authenticated/anonymous/
+  auth-error with retry) + header balance chip with Russian plurals.
+- **Credit scans**: auth pipeline validate → session → requestId → abuse check
+  → reserve → cache/AI → commit/release; `analyzeRequestSchema.requestId`
+  (uuid, mandatory in auth mode); `COMMIT_UNCERTAIN` replay; release ×3 then
+  logged residual; NO_FOOD commits; recipes untouched (no credit overhead).
+- **Rate limits**: `rate:auth:vision:*` namespace (user-UUID hash + IP,
+  30/200 defaults); anonymous 5/20 unchanged; Redis fail-closed unchanged.
+- **Tests**: 209 unit (was 169; +40 incl. 14 billing/cache/rate red-team),
+  22/22 E2E (12 legacy + 10 platform: anon/auth/zero-credits/outage-retry/
+  viewports). Critic C-101, C-201, C-301, C-601 closed; residuals documented.
+- **Not done yet**: secret scan + commits + push + Preview deploy with
+  `PLATFORM_INTEGRATION_ENABLED=true` + real-Telegram smoke (Phase 7–9).
+
+## Previous Checkpoint: GROQ VISION FALLBACK FIX (800 TOKENS) — DEPLOYED + SMOKE 200 VIA GROQ
 
 **Date:** 2026-09-17
 **Branch:** master (pushed, clean)

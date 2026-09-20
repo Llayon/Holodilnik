@@ -56,6 +56,23 @@
   from Holodilnik in any environment (all integration tests use the mock;
   no AI quota burned beyond the pre-existing mock E2E).
 
+### Phase 7 (continued — fresh Preview with operator envs, awaiting access)
+
+- Operator confirmed Preview envs: `USER_PLATFORM_SERVICE_TOKEN` (Preview
+  only), `USER_PLATFORM_URL` → production UserPlatform,
+  `PLATFORM_INTEGRATION_ENABLED=true`.
+- Redeployed Preview to pick up the new envs (envs inject at deploy time):
+  `https://holodilnik-bamytm7ud-maximocappuccino-gmailcoms-projects.vercel.app`
+  (Ready, 19s build). Previous Preview (`58z8m3lwf`) predates the envs and is
+  stale for integration purposes.
+- Direct smoke from here is impossible: both Preview URLs answer 302
+  (Deployment Protection SSO wall serves before our function — including the
+  URL with the Telegram exception, which is correctly scoped, not public).
+- UserPlatform production re-verified healthy (`/health` 200) — untouched.
+- NEXT: operator extends the protection exception to the NEW Preview URL
+  (or provides a protection-bypass token), then runs the Phase 8 Telegram
+  script below. No code changes needed for either path.
+
 ## Previous Checkpoint: GROQ VISION FALLBACK FIX (800 TOKENS) — DEPLOYED + SMOKE 200 VIA GROQ
 
 **Date:** 2026-09-17

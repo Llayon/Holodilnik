@@ -3,6 +3,7 @@ import cors from "cors";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fridgeRouter from "./routes/fridge.js";
+import platformRouter from "./routes/platform.js";
 import recommendationsRouter from "./routes/recommendations.js";
 import {
   config,
@@ -138,6 +139,8 @@ app.post("/cache/clear", requireDev, handleCacheClear);
 // Routes — mount at both /api/* and /* for Vercel api/index stripped prefix compatibility.
 app.use("/api/fridge", fridgeRouter);
 app.use("/fridge", fridgeRouter);
+app.use("/api/platform", platformRouter);
+app.use("/platform", platformRouter);
 app.use("/api/recommendations", recommendationsRouter);
 app.use("/recommendations", recommendationsRouter);
 

@@ -7,6 +7,16 @@ import {
   humanizeApiError,
   isApiError,
 } from "./lib/api";
+import { detectHost } from "./lib/host";
+import {
+  exchangeWithHolodilnik,
+  fetchPlatformMe,
+  formatCredits,
+  getPlatformStatus,
+  humanizePlatformError,
+  type AuthState,
+  type PlatformBalance,
+} from "./lib/platform";
 import type { FridgeAnalysisResult, Recipe } from "../shared/types";
 import { SLOT_LABELS } from "../shared/types";
 import { normalizeIngredient } from "../shared/normalization";
@@ -40,6 +50,12 @@ export default function App() {
   const [healthRecipes, setHealthRecipes] = useState<string | null>(null);
   const [lastVisionProvider, setLastVisionProvider] = useState<string | null>(null);
   const [lastRecipeProvider, setLastRecipeProvider] = useState<string | null>(null);
+  // UserPlatform auth (Gauntlet 2): anonymous web stays legacy; TG/MAX go platform.
+  const [authState, setAuthState] = useState<AuthState>("booting");
+  const [balance, setBalance] = useState<PlatformBalance | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  // One stable idempotency key per image: retries of the same photo reuse it.
+  const scanRequestIdRef = useRef<string>(crypto.randomUUID());
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -63,6 +79,37 @@ export default function App() {
       .catch(() => setProviderMode("unknown"));
   }, []);
 
+  const bootPlatform = async () => {
+    setAuthState("booting");
+    setAuthError(null);
+    try {
+      const status = await getPlatformStatus();
+      if (!status.integrationEnabled) {
+        setAuthState("anonymous");
+        return;
+      }
+      const host = detectHost();
+      if (host.name === "web" || !host.initData) {
+        setAuthState("anonymous");
+        return;
+      }
+      const account = await exchangeWithHolodilnik({
+        platform: host.name,
+        initData: host.initData,
+        startParam: host.startParam,
+      });
+      setBalance(account.balance);
+      setAuthState("authenticated");
+    } catch (e) {
+      setAuthError(humanizePlatformError(e));
+      setAuthState("auth-error");
+    }
+  };
+
+  useEffect(() => {
+    void bootPlatform();
+  }, []);
+
   const handleFile = async (file: File) => {
     setError(null);
     // Accept image/* plus HEIC by extension (iPhone may report type empty)
@@ -82,6 +129,8 @@ export default function App() {
 
     try {
       const result = await compressImage(file);
+      // New photo = new deliberate action = fresh idempotency key.
+      scanRequestIdRef.current = crypto.randomUUID();
       // Preview uses the normalized image that is actually sent to the model
       // (re-encoded JPEG, EXIF stripped). Do not retain original 10MB bytes.
       setImageBase64(result.base64);
@@ -117,10 +166,24 @@ export default function App() {
     setError(null);
     setStep("analyzing");
     try {
-      const { data, meta } = await analyzeFridge({ imageBase64, mimeType: imageMime });
+      // Same photo retried reuses the key (no extra charge); a fresh photo
+      // mints a new key in handleFile.
+      const { data, meta } = await analyzeFridge({
+        imageBase64,
+        mimeType: imageMime,
+        requestId: scanRequestIdRef.current,
+      });
       setProviderMode(meta.provider as never);
       setModelId(meta.modelId);
       setLastVisionProvider(meta.provider);
+      // Authoritative balance first, refresh fallback — never local decrement.
+      if (meta.balance) {
+        setBalance({ available: meta.balance.available, reserved: 0 });
+      } else if (authState === "authenticated") {
+        fetchPlatformMe()
+          .then((me) => setBalance(me.balance))
+          .catch(() => undefined);
+      }
       setAnalysis(data);
       setIngredients(
         data.ingredients.map((i) => ({
@@ -226,6 +289,11 @@ export default function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="logo">Холодильник</div>
+        {authState === "authenticated" && balance && (
+          <div className="balance-chip" data-testid="balance-chip">
+            {formatCredits(balance.available)}
+          </div>
+        )}
         <div
           className={`mock-badge ${providerMode === "mock" ? "mock" : providerMode === "gemini" || providerMode === "groq" || providerMode === "zai" ? "live" : ""}`}
           data-testid="provider-badge"
@@ -265,7 +333,23 @@ export default function App() {
       )}
 
       <main className="app-main">
-        {step === "landing" && (
+        {authState === "booting" && (
+          <section className="analyzing" data-testid="auth-booting">
+            <div className="spinner" aria-hidden="true" />
+            <h2>Открываю…</h2>
+          </section>
+        )}
+        {authState === "auth-error" && (
+          <section className="landing" data-testid="auth-error">
+            <div className="error-banner" role="alert">
+              <span>{authError ?? "Не удалось войти"}</span>
+              <button onClick={() => void bootPlatform()} data-testid="auth-retry">
+                Повторить
+              </button>
+            </div>
+          </section>
+        )}
+        {authState !== "booting" && authState !== "auth-error" && step === "landing" && (
           <section className="landing" data-testid="landing">
             <div className="landing-hero">
               <h1>Покажи холодильник — подберём, что&nbsp;приготовить.</h1>

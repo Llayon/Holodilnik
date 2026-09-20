@@ -97,6 +97,16 @@ body {
   border: 1px solid var(--border);
 }
 
+.app-header .balance-chip {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-subtle, #f4f4f5);
+  white-space: nowrap;
+}
+
 .mock-badge.mock {
   background: #fff7e6;
   color: #8a5a00;

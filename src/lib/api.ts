@@ -22,9 +22,14 @@ export async function checkHealth(): Promise<{
   return res.json();
 }
 
-export async function analyzeFridge(params: { imageBase64: string; mimeType: string }): Promise<{
+export async function analyzeFridge(params: {
+  imageBase64: string;
+  mimeType: string;
+  /** Client idempotency key: one UUID per deliberate scan action (Phase 2+). */
+  requestId?: string;
+}): Promise<{
   data: FridgeAnalysisResult;
-  meta: { provider: ApiMode; modelId: string; cached?: boolean };
+  meta: { provider: ApiMode; modelId: string; cached?: boolean; balance?: { available: number } };
 }> {
   const res = await fetch("/api/fridge/analyze", {
     method: "POST",
@@ -97,6 +102,10 @@ export function humanizeApiError(e: unknown): string {
         return e.message || "Превышен лимит запросов — подождите 20-30 секунд и попробуйте снова.";
       case "DAILY_LIMIT_REACHED":
         return "На сегодня тестовый лимит закончился. Попробуйте снова завтра.";
+      case "INSUFFICIENT_CREDITS":
+        return "Кредиты закончились — новые начисления скоро появятся.";
+      case "PLATFORM_UNAVAILABLE":
+        return "Сервис аккаунта временно недоступен. Попробуйте позже.";
       case "INVALID_PROVIDER_RESPONSE":
         return "Не удалось распознать содержимое — попробуйте ещё раз.";
       case "PROVIDER_ERROR":

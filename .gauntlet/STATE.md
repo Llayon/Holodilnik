@@ -39,8 +39,22 @@
 - **Tests**: 209 unit (was 169; +40 incl. 14 billing/cache/rate red-team),
   22/22 E2E (12 legacy + 10 platform: anon/auth/zero-credits/outage-retry/
   viewports). Critic C-101, C-201, C-301, C-601 closed; residuals documented.
-- **Not done yet**: secret scan + commits + push + Preview deploy with
-  `PLATFORM_INTEGRATION_ENABLED=true` + real-Telegram smoke (Phase 7–9).
+- **Not done yet**: Preview deploy with `PLATFORM_INTEGRATION_ENABLED=true` +
+  real-Telegram smoke (Phase 7–9) — blocked on operator credential setup (§52).
+
+### Phase 7 (partial — STOP at FRIDGE SERVICE CREDENTIAL REQUIRED)
+
+- Pushed 5 commits to `origin/master` (`acdae9f..b11507e`), tree clean,
+  secret scan clean (only pre-existing `gsk_...` placeholder mentions).
+- Preview build deployed (code only, flag unset → legacy mode):
+  `https://holodilnik-58z8m3lwf-maximocappuccino-gmailcoms-projects.vercel.app`
+  (Ready, 19s build — proves the bundle is self-contained; URL is SSO-gated
+  by design so external smoke returns 302).
+- Production NOT redeployed (still `acdae9f` code, flag absent → false →
+  legacy anonymous flow unchanged).
+- No real service credential exists yet — zero live UserPlatform calls made
+  from Holodilnik in any environment (all integration tests use the mock;
+  no AI quota burned beyond the pre-existing mock E2E).
 
 ## Previous Checkpoint: GROQ VISION FALLBACK FIX (800 TOKENS) — DEPLOYED + SMOKE 200 VIA GROQ
 

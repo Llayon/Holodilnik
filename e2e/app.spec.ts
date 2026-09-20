@@ -1,38 +1,5 @@
 import { test, expect } from "@playwright/test";
-import fs from "node:fs";
-import path from "node:path";
-
-// Valid small JPEG for e2e — must be decodable by browser canvas (after client compression)
-// and >500 bytes to pass server's tiny-image guard. Using sharp if available.
-
-async function createTempImage(filename = "fridge-test.png"): Promise<string> {
-  const filePath = path.join(process.cwd(), filename);
-  try {
-    const { default: sharp } = await import("sharp");
-    // Create a realistic 800×600 fridge-like JPEG (~8-15KB, valid, decodable)
-    const svg = `<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="#f5f5f0"/><rect x="40" y="40" width="720" height="160" rx="12" fill="#ff3b30"/><rect x="60" y="240" width="340" height="140" rx="8" fill="#34c759"/><rect x="430" y="240" width="310" height="140" rx="8" fill="#ffcc02"/><text x="120" y="130" font-size="24" fill="white" font-family="sans-serif">Test fridge</text></svg>`;
-    await sharp({
-      create: { width: 800, height: 600, channels: 3, background: { r: 255, g: 255, b: 255 } },
-    })
-      .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
-      .jpeg({ quality: 80, mozjpeg: true })
-      .toFile(filePath);
-    return filePath;
-  } catch {
-    // Fallback: tiny 1x1 png padded to >500 bytes but still decodable?
-    // Create 6KB buffer with valid 1x1 PNG header + readable tail (browser may still decode header)
-    const TINY_PNG_BASE64 =
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
-    const base = Buffer.from(TINY_PNG_BASE64, "base64");
-    // Instead of random bytes, repeat base to keep PNG chunks valid-ish? Use sharp fallback if needed.
-    // Write at least 600 bytes OF valid PNG — use base as is and rely on server mock (will still need decode)
-    // For fallback, just write base (67 bytes) - e2e will handle compression failure by fallback? Better ensure >500 via valid large PNG.
-    // As last resort, write base repeated 10 times — browser will decode first PNG and ignore trailing? Most decoders ignore trailing.
-    const buf = Buffer.concat(Array.from({ length: 10 }, () => base));
-    fs.writeFileSync(filePath, buf);
-    return filePath;
-  }
-}
+import { createTempImage } from "./helpers.js";
 
 test.describe("Holodilnik vertical slice (MOCK)", () => {
   test.beforeEach(async ({ page }) => {

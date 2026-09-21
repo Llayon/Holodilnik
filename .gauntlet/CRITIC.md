@@ -121,3 +121,28 @@ proceed to Phase 1.
   recovers; 360/390/430 overflow-free with chip visible; plurals unit-tested
   (1/21 кредит, 2–4 кредита, 0/5–25 кредитов).
 - No open BLOCKER/P1.
+
+## Gauntlet 2 Phase 7/8 critic pass — preview + live Telegram (2026-09-21, CLOSED)
+
+- **C-701 [BLOCKER] WebK has no pre-injected bridge — FOUND LIVE, FIXED:**
+  the debug overlay proved `tg=false` inside a genuine LAUNCH APP WebView on
+  Telegram Web: without `telegram-web-app.js` there is no `window.Telegram`
+  there at all (native clients pre-inject; WebK wires via the script).
+  Fix: official script tag in `index.html` + `tgWebAppData` location-hash
+  fallback (same signed payload, same server verification). Re-verified live:
+  `tg=true initLen=562 auth=authenticated` + 10-credit chip.
+- **C-702 [BLOCKER] Service envs in the wrong project — FOUND LIVE, FIXED:**
+  live exchange 503'd; `vercel env ls` proved token+URL sat in `user-platform`
+  instead of `holodilnik`, and the pasted value then 401'd twice. Fix: clean
+  rotation via stdout-pipe into `vercel env update` (secret never displayed,
+  committed, or logged), dead keys revoked, garbage-exchange negative probe
+  now returns 400 `INVALID_PLATFORM_DATA` end-to-end with zero quota/users.
+- **C-703 [P1] Multi-device confusion masked the smoke:** phone (authenticated,
+  chip 10) vs desktop Chrome (anonymous, no cookie) interleaved in one log
+  stream; a Chrome scan "not deducting" is correct behavior, not a bug.
+  Lesson recorded: per-device cookies are the identity boundary — always ask
+  which device acted before diagnosing billing.
+- **Checked live:** 10 → 9 → 9 across close/reopen (screenshots); server shows
+  exchange → `auth committed` → recipes → returning-user exchange; recipes
+  flow untouched by credits; anonymous legacy path intact on the same build.
+- No open BLOCKER/P1. MAX O-1 remains the single external non-blocking item.

@@ -56,6 +56,37 @@
   from Holodilnik in any environment (all integration tests use the mock;
   no AI quota burned beyond the pre-existing mock E2E).
 
+### Phase 8 — LIVE TELEGRAM SMOKE GREEN (iPhone, `@holodilnikmegabot`)
+
+**Date:** 2026-09-21. Bot: `@holodilnikmegabot` (`t.me/holodilnikmegabot/app`).
+Stable smoke alias: `https://holodilnik-platform-smoke.vercel.app`.
+
+- Fresh open → chip **«10 AI-кредитов»** (exchange 19:23/22:44, +10 first bonus).
+- One real photo → Analyze → ingredients → chip **«9 AI-кредитов»**.
+- Full close → reopen → **«9»**, same account, no second bonus (re-exchange
+  22:47 returning-user).
+- Server money trail: `auth committed provider=groq` (ZAI 10s timeout →
+  Groq fallback, 11.6s) + Groq recipes 1.8s. Exactly 1 paid vision scan.
+- Total live AI spend this gauntlet: 2 anonymous scans (pre-smoke diagnosis)
+  - 1 credit scan + 2 recipe calls. No other quota burned.
+- Real root causes found live (all fixed/proven, no code guessing):
+  1. Telegram Web (WebK) injects NO `window.Telegram` — bridge needs the
+     official `telegram-web-app.js` script (was absent → `tg=false`).
+  2. Service envs were placed in the **user-platform** project instead of
+     **holodilnik** (found via `vercel env ls`); pasted value then 401'd
+     twice → clean rotation via pipe (token never displayed), old keys
+     revoked (`8df949…`, `adba9114…`), working key `4207c1…`.
+  3. `npm run service:* -- --app …` swallows `--app` through workspaces —
+     use `npx tsx apps/api/src/scripts/service.ts …` (UserPlatform papercut,
+     left untouched per scope rule).
+  4. Every Preview redeploy changes the URL → stable alias
+     `holodilnik-platform-smoke.vercel.app` (BotFather points at it once).
+- Watch (cosmetic): successful `POST /api/fridge/analyze` sometimes logs at
+  `error` level in Vercel while returning correct 200 + committed balances —
+  end-state balances authoritative and correct; not a blocker.
+- `?tgdebug=1` overlay removed after duty (this pass); `describeBridge()`
+  kept as tested API. BotFather URL cleanup (`?tgdebug=1` inert now) optional.
+
 ### Phase 7 (continued — fresh Preview with operator envs, awaiting access)
 
 - Operator confirmed Preview envs: `USER_PLATFORM_SERVICE_TOKEN` (Preview

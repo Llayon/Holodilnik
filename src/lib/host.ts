@@ -53,3 +53,26 @@ export function detectHost(): HostInfo {
   }
   return { name: "web", initData: null, startParam: null };
 }
+
+/**
+ * Safe bridge facts for the `?tgdebug=1` overlay (lengths/presence ONLY —
+ * never initData content, never user IDs).
+ */
+export function describeBridge(): {
+  hasTelegram: boolean;
+  hasWebApp: boolean;
+  initDataLen: number;
+  hasMax: boolean;
+  maxInitDataLen: number;
+} {
+  const tg = readGlobal(["Telegram"]) as { WebApp?: unknown } | undefined;
+  const webApp = readGlobal(["Telegram", "WebApp"]) as TelegramBridge | undefined;
+  const max = readGlobal(["WebApp"]) as MaxBridge | undefined;
+  return {
+    hasTelegram: !!tg,
+    hasWebApp: !!webApp,
+    initDataLen: webApp && typeof webApp.initData === "string" ? webApp.initData.length : -1,
+    hasMax: !!max,
+    maxInitDataLen: max && typeof max.initData === "string" ? max.initData.length : -1,
+  };
+}

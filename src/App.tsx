@@ -7,7 +7,7 @@ import {
   humanizeApiError,
   isApiError,
 } from "./lib/api";
-import { detectHost } from "./lib/host";
+import { describeBridge, detectHost } from "./lib/host";
 import {
   exchangeWithHolodilnik,
   fetchPlatformMe,
@@ -333,6 +333,26 @@ export default function App() {
       )}
 
       <main className="app-main">
+        {new URLSearchParams(window.location.search).get("tgdebug") === "1" &&
+          (() => {
+            const b = describeBridge();
+            return (
+              <div
+                data-testid="tgdebug"
+                style={{
+                  fontSize: 11,
+                  fontFamily: "monospace",
+                  background: "#111",
+                  color: "#0f0",
+                  padding: 8,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-all",
+                }}
+              >
+                {`tg=${b.hasTelegram} webapp=${b.hasWebApp} initLen=${b.initDataLen} max=${b.hasMax} maxLen=${b.maxInitDataLen} auth=${authState} err=${authError ?? "-"}`}
+              </div>
+            );
+          })()}
         {authState === "booting" && (
           <section className="analyzing" data-testid="auth-booting">
             <div className="spinner" aria-hidden="true" />

@@ -73,6 +73,32 @@
   (or provides a protection-bypass token), then runs the Phase 8 Telegram
   script below. No code changes needed for either path.
 
+### Phase 7 (continued — live credential proven, stable alias)
+
+- Env forensics: `USER_PLATFORM_SERVICE_TOKEN`/`USER_PLATFORM_URL` were
+  initially placed in the **user-platform** project (wrong home — the caller
+  needs them, not the platform); moved to **holodilnik**/Preview. Pasted
+  value still 401'd twice (format/value mismatch class, incl. one Redeploy
+  race excluded by rebuild).
+- Clean rotation via pipe (token never displayed/logged/committed):
+  minted `holodilnik-preview-smoke`, piped straight into
+  `vercel env update` (Preview scope only), redeployed, re-aliased.
+- **Live proof (zero quota, zero users):** garbage initData through the full
+  Holodilnik → UserPlatform path returns 400 `INVALID_PLATFORM_DATA` in
+  Russian — service auth accepted, signature check rejected, mapping intact.
+  `last_used_at` on the credential confirms the audit touch works live.
+- Credential hygiene (UserPlatform DB): revoked stillborn `8df949…`
+  (holodilnik-production, never authenticated) and the aborted-pipe orphan
+  `adba9114…`; active: `4207c1…` (installed, working) + operator-made
+  `306763b2…` (holodilnik-preview, untouched — revoke if unneeded).
+- **Stable alias (kills URL churn):**
+  `https://holodilnik-platform-smoke.vercel.app` → current Preview.
+  Re-alias on every future redeploy (one CLI call); BotFather + exception
+  point at the alias ONCE and never change again.
+- Known CLI papercut (not a blocker, no UserPlatform change made):
+  `npm run service:* -- --app …` swallows `--app` through npm workspaces —
+  use `npx tsx apps/api/src/scripts/service.ts <cmd> --app …` instead.
+
 ## Previous Checkpoint: GROQ VISION FALLBACK FIX (800 TOKENS) — DEPLOYED + SMOKE 200 VIA GROQ
 
 **Date:** 2026-09-17

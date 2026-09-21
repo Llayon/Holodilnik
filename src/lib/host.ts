@@ -47,11 +47,38 @@ export function detectHost(): HostInfo {
   if (tg && typeof tg.initData === "string" && tg.initData.length > 0) {
     return { name: "telegram", initData: tg.initData, startParam: extractStartParam(tg.initData) };
   }
+  // WebK fallback: Telegram Web passes launch data in the location hash
+  // (#tgWebAppData=...&tgWebAppVersion=...&tgWebAppPlatform=...) when the
+  // bridge script has not (yet) wired window.Telegram. Same signed payload,
+  // verified server-side exactly like bridge initData.
+  const hashInitData = readHashInitData();
+  if (hashInitData) {
+    return {
+      name: "telegram",
+      initData: hashInitData,
+      startParam: extractStartParam(hashInitData),
+    };
+  }
   const max = readGlobal(["WebApp"]) as MaxBridge | undefined;
   if (max && typeof max.initData === "string" && max.initData.length > 0) {
     return { name: "max", initData: max.initData, startParam: extractStartParam(max.initData) };
   }
   return { name: "web", initData: null, startParam: null };
+}
+
+/** Unsigned `tgWebAppData` hash param (Telegram Web launch data). */
+export function readHashInitData(): string | null {
+  try {
+    const hash = window.location.hash.startsWith("#")
+      ? window.location.hash.slice(1)
+      : window.location.hash;
+    if (!hash) return null;
+    const params = new URLSearchParams(hash);
+    const v = params.get("tgWebAppData");
+    return v && v.length > 0 && v.length <= 8192 ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -64,15 +91,18 @@ export function describeBridge(): {
   initDataLen: number;
   hasMax: boolean;
   maxInitDataLen: number;
+  hashLen: number;
 } {
   const tg = readGlobal(["Telegram"]) as { WebApp?: unknown } | undefined;
   const webApp = readGlobal(["Telegram", "WebApp"]) as TelegramBridge | undefined;
   const max = readGlobal(["WebApp"]) as MaxBridge | undefined;
+  const hashInit = readHashInitData();
   return {
     hasTelegram: !!tg,
     hasWebApp: !!webApp,
     initDataLen: webApp && typeof webApp.initData === "string" ? webApp.initData.length : -1,
     hasMax: !!max,
     maxInitDataLen: max && typeof max.initData === "string" ? max.initData.length : -1,
+    hashLen: hashInit ? hashInit.length : -1,
   };
 }

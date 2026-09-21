@@ -5,6 +5,12 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Холодильник — что приготовить</title>
+    <!-- Official Telegram WebApp bridge: native clients pre-inject
+      window.Telegram, but Telegram Web (WebK/WebA) only wires it through
+      this script (postMessage with the parent frame). Without it WebK Mini
+      Apps see no bridge at all. Loaded synchronously so detectHost() in the
+      boot effect always sees the final object. -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
   </head>
   <body>
     <div id="root"></div>

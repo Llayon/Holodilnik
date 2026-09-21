@@ -349,7 +349,7 @@ export default function App() {
                   wordBreak: "break-all",
                 }}
               >
-                {`tg=${b.hasTelegram} webapp=${b.hasWebApp} initLen=${b.initDataLen} max=${b.hasMax} maxLen=${b.maxInitDataLen} auth=${authState} err=${authError ?? "-"}`}
+                {`tg=${b.hasTelegram} webapp=${b.hasWebApp} initLen=${b.initDataLen} max=${b.hasMax} maxLen=${b.maxInitDataLen} hashLen=${b.hashLen} auth=${authState} err=${authError ?? "-"}`}
               </div>
             );
           })()}

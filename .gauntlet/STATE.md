@@ -87,6 +87,20 @@ Stable smoke alias: `https://holodilnik-platform-smoke.vercel.app`.
 - `?tgdebug=1` overlay removed after duty (this pass); `describeBridge()`
   kept as tested API. BotFather URL cleanup (`?tgdebug=1` inert now) optional.
 
+### Phase 9 Step 1 — SAFE PRODUCTION CODE DEPLOY GREEN (flag false)
+
+- Found `PLATFORM_INTEGRATION_ENABLED=true` already spanning Production (set
+  12h ago) — violates Step-1 precondition, so split it per-scope first:
+  Production=false now, Preview to be restored=true via dashboard (CLI
+  `env add … preview` stalls on the branch prompt — operator action).
+- Deployed `cd3d5b6` to Production (`holodilnik-h928dkcer`, aliased
+  `holodilnik-seven.vercel.app`, Ready): `/api/health` 200 prod-minimal,
+  `/api/platform/status` = `{"integrationEnabled":false}`, `/` 200,
+  `/api/fridge/status` 200. Zero AI calls (no quota).
+- Production env by NAME: `USER_PLATFORM_URL` ✓, `USER_PLATFORM_SERVICE_TOKEN`
+  ✓ (value unverified — Step-5 smoke proves it), `PLATFORM_INTEGRATION_ENABLED`
+  = false ✓. Legacy anonymous behavior unchanged. No code changes for deploy.
+
 ### Phase 7 (continued — fresh Preview with operator envs, awaiting access)
 
 - Operator confirmed Preview envs: `USER_PLATFORM_SERVICE_TOKEN` (Preview

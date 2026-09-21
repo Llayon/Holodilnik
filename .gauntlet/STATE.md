@@ -101,6 +101,18 @@ Stable smoke alias: `https://holodilnik-platform-smoke.vercel.app`.
   ✓ (value unverified — Step-5 smoke proves it), `PLATFORM_INTEGRATION_ENABLED`
   = false ✓. Legacy anonymous behavior unchanged. No code changes for deploy.
 
+### Phase 9 Steps 3–4 — BOT ON PROD, FLAG ON (awaiting Step-5 smoke)
+
+- Operator moved BotFather Web App URL to `https://holodilnik-seven.vercel.app`.
+- Flag `PLATFORM_INTEGRATION_ENABLED=true` set for Production (CLI `update`
+  still blind to joint entries — used `rm` + per-scope `add`; Preview=true
+  restored via dashboard after the same CLI branch-prompt quirk).
+- Redeployed Production (`holodilnik-cqubwpa2r`, alias `holodilnik-seven`,
+  Ready): `/api/platform/status` = `{"integrationEnabled":true}` live.
+- NOTE: Production `USER_PLATFORM_SERVICE_TOKEN` value still unverified
+  (name present, pasted by operator earlier) — Step-5 exchange is the proof.
+  Staging alias + Preview stay as-is for now.
+
 ### Phase 7 (continued — fresh Preview with operator envs, awaiting access)
 
 - Operator confirmed Preview envs: `USER_PLATFORM_SERVICE_TOKEN` (Preview

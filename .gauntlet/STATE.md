@@ -124,6 +124,30 @@ provider=groq` (ZAI 1305 → Groq, 2.8s) → Groq recipes success →
 - Sessions/wallets survive flag flips (state lives in UserPlatform, not in
   the flag); users keep balances across rollback and re-enable.
 
+### FROZEN PRODUCTION BASELINE (Wardrobe starts here — 2026-09-22)
+
+- **Holodilnik:** master `6aa2ced`, clean tree. Prod deploy `1sy0xwtu3`
+  (Ready) via alias `https://holodilnik-seven.vercel.app` (flag true, health
+  200). Bot `@holodilnikmegabot` → production. Smoke 10→9→9 green + rollback
+  drilled. No code changes since `cd3d5b6` except docs.
+- **UserPlatform:** master `18f37a5`, clean, untouched since Gauntlet 1.
+  Prod `https://user-platform-phi.vercel.app` healthy. Migrations through
+  `20260920000000_service_bridge` applied.
+- **Credentials (fridge):** active `4207c1…` (Preview+Production traffic,
+  last used 2026-09-22 — single shared credential for both envs, acceptable,
+  separable later via rotation); revoked stillborns `8df949…`, `adba9114…`;
+  spare `306763b2…` revoked 2026-09-22 after `last_used_at` stayed null
+  (confirmed unused, per instruction).
+- **Staging:** alias `holodilnik-platform-smoke.vercel.app` currently →
+  `r5iobonxf` (13h stale). Redeploy + re-alias before next staging use.
+  Preview Vercel Authentication: operator-disabled during debugging —
+  re-enable when staging is needed again (production was never affected).
+- **Freeze:** no architecture changes to either repo without a proven real
+  need. Wardrobe consumes the pattern as-is.
+- **Known non-blockers:** MAX O-1 (live signature pending moderation);
+  `npm run service:*` eats `--app` through workspaces (use `npx tsx …`);
+  analyze-call Vercel log level cosmetic.
+
 ### Phase 9 Steps 3–4 — BOT ON PROD, FLAG ON (awaiting Step-5 smoke)
 
 - Operator moved BotFather Web App URL to `https://holodilnik-seven.vercel.app`.

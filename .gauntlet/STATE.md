@@ -101,6 +101,29 @@ Stable smoke alias: `https://holodilnik-platform-smoke.vercel.app`.
   ✓ (value unverified — Step-5 smoke proves it), `PLATFORM_INTEGRATION_ENABLED`
   = false ✓. Legacy anonymous behavior unchanged. No code changes for deploy.
 
+### Phase 9 Step 5 — PRODUCTION SMOKE GREEN (fresh account, `@holodilnikmegabot`)
+
+- Fresh Telegram identity → **«10 AI-кредитов»** → one real photo → Analyze →
+  ingredients → **«9»** → full close → reopen → **«9»**, same account.
+- Production server trail (`holodilnik-seven`): exchange → `auth committed
+  provider=groq` (ZAI 1305 → Groq, 2.8s) → Groq recipes success →
+  returning-user exchange. Exactly 1 paid credit. Production service token
+  value thereby proven working (it was name-only until this smoke).
+- Live AI spend on Production: 1 vision + 1 recipe (+2 anon diagnostic scans
+  from the earlier device-confusion episode — documented, no billing impact).
+
+### Phase 9 Step 6 — ROLLBACK DRILL GREEN (then re-enabled)
+
+- Set Production flag false → redeployed (`eb5wxjobx`) → status `false`,
+  landing + health 200 legacy, zero AI. Then flag true → redeployed
+  (`1sy0xwtu3`, current) → status `true` live.
+- Exact rollback procedure (proven, no code change): set
+  `PLATFORM_INTEGRATION_ENABLED=false` (Production) + `vercel --prod`;
+  re-enable symmetrically. CLI note: `env update` can't match joint-scope
+  entries — use scoped `env rm NAME production` + `env add NAME production`.
+- Sessions/wallets survive flag flips (state lives in UserPlatform, not in
+  the flag); users keep balances across rollback and re-enable.
+
 ### Phase 9 Steps 3–4 — BOT ON PROD, FLAG ON (awaiting Step-5 smoke)
 
 - Operator moved BotFather Web App URL to `https://holodilnik-seven.vercel.app`.

@@ -146,3 +146,21 @@ proceed to Phase 1.
   exchange → `auth committed` → recipes → returning-user exchange; recipes
   flow untouched by credits; anonymous legacy path intact on the same build.
 - No open BLOCKER/P1. MAX O-1 remains the single external non-blocking item.
+
+## Gauntlet 2 Phase 9 critic pass — production rollout (2026-09-21, CLOSED)
+
+- **Step 1 precondition enforced, not assumed:** flag was already `true` in
+  Production when Step 1 began — deploy paused until scopes were split
+  (Production=false, Preview restored separately). Safe code deploy then
+  verified legacy (health/landing/fridge-status 200, status false, zero AI).
+- **Step 5 (fresh identity):** 10 → 9 → 9 with server-side
+  exchange → `auth committed` → recipes → returning-exchange trail. No
+  repeated retries, quota bounded (1 paid vision + 1 recipe).
+- **Step 6 rollback drilled live** (false → legacy verified → true), not just
+  documented. Re-enable verified via live status endpoint.
+- **Residuals:** spare credential `306763b2…` (holodilnik-preview) left ACTIVE
+  — unused status UNCONFIRMED, so per instructions NOT revoked; operator
+  decides. Preview Vercel Authentication currently OFF (operator disabled it
+  for debugging) — recommend re-enabling now that the bot lives on
+  Production; Preview alias stays as staging either way.
+- No open BLOCKER/P1.

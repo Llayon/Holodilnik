@@ -106,7 +106,7 @@ Stable smoke alias: `https://holodilnik-platform-smoke.vercel.app`.
 - Fresh Telegram identity → **«10 AI-кредитов»** → one real photo → Analyze →
   ingredients → **«9»** → full close → reopen → **«9»**, same account.
 - Production server trail (`holodilnik-seven`): exchange → `auth committed
-  provider=groq` (ZAI 1305 → Groq, 2.8s) → Groq recipes success →
+provider=groq` (ZAI 1305 → Groq, 2.8s) → Groq recipes success →
   returning-user exchange. Exactly 1 paid credit. Production service token
   value thereby proven working (it was name-only until this smoke).
 - Live AI spend on Production: 1 vision + 1 recipe (+2 anon diagnostic scans
